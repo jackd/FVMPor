@@ -1,0 +1,17 @@
+********************************************************************************
+*				 FVMPor					       *
+*                 Finite Volume Method for Porous Media			       *
+********************************************************************************
+
+A library for simulating fluid flows and transport in heterogeneous porous
+media. The control volume finite element method (CVFE) is used on unstructured
+two- and three-dimensional meshes.
+
+Parallelism is supported by combinations of MPI-CUDA and MPI-OpenMP.
+
+This code is still in very early development and changing rapidly, so don't use
+it for anything that matters!
+
+Written by Ben Cumming and Tim Moroney.
+
+We cannot provide any support for the library in its current form.

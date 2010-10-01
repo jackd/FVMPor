@@ -1,7 +1,7 @@
-********************************************************************************
-*				 FVMPor					       *
-*                 Finite Volume Method for Porous Media			       *
-********************************************************************************
+################################################################################
+#                             FVMPor                                           #
+#                 Finite Volume Method for Porous Media                        #
+################################################################################
 
 A library for simulating fluid flows and transport in heterogeneous porous
 media. The control volume finite element method (CVFE) is used on unstructured

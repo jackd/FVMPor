@@ -231,7 +231,7 @@ int Preconditioner::setup(
     // find the diagonal parts of the preconditioner
     for( int i=0; i<m.local_nodes(); i++ )
     {
-        if( physics().is_dirichlet_h_vec[i] )
+        if( physics().is_dirichlet_h_vec_[i] )
             D1[i] = 0.;
         else
             D1[i] = c;

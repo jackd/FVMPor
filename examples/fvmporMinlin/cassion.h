@@ -24,6 +24,7 @@ namespace fvmpor{
                 else
                     h_vec[i] = boundary_condition_h(tag).hydrostatic(t,el);
             } else{
+                //h_vec[i] = sin(el)+cos(x);
                 h_vec[i] = -7.34;
                 //h_vec[i] = -100.;
             }

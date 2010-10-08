@@ -2,7 +2,8 @@ cc=icc
 CC=icpc
 #CC=g++ -Wall -Wno-sign-compare -Wno-unused
 localOPTS=-DMPICH_IGNORE_CXX_SEEK -DUSE_MINLIN -DUSE_MKL
-debugOPTS=-g -O3
+debugOPTS=-g -O3 -openmp
+#debugOPTS=-g -O3 -openmp
 #debugOPTS=-g -O0 -DLIN_VERBOSE
 #debugOPTS=-DMPICH_IGNORE_CXX_SEEK -DFVM_DEBUG -DMESH_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC -DVECTOR_DEBUG -DLIN_DEBUG -g -O0 -fno-inline -DLIN_DEBUG -DLIN_VERBOSE
 parmsOPTS=-DUSE_MPI -DREAL=double -DDBL -DHAS_BLAS -DFORTRAN_UNDERSCORE -DVOID_POINTER_SIZE_8
@@ -71,13 +72,13 @@ cassion.o : cassion.cpp fvmpor.h
 	$(CC) $(OPTS) $(INCLUDE) -c cassion.cpp
 
 fvmpor_ODE.o : fvmpor_ODE.h preconditioner_dss.h fvmpor_ODE.cpp
-	$(CC) $(OPTS) $(INCLUDE) -c fvmpor_ODE.cpp
+	$(CC) $(OPTS) $(INCLUDE) -c fvmpor_ODE.cpp -o fvmpor_ODE.o
 
 fvmpor_ODE_impl.o : fvmpor_ODE.h fvmpor_ODE_impl.cpp fvmpor.h
-	$(CC) $(OPTS) -DPROBLEM_CASSION $(INCLUDE) -c fvmpor_ODE_impl.cpp
+	$(CC) $(OPTS) -DPROBLEM_CASSION $(INCLUDE) -c fvmpor_ODE_impl.cpp -o fvmpor_ODE_impl.o
 
 fvmpor.o : fvmpor.h fvmpor.cpp
-	$(CC) $(OPTS) $(INCLUDE) -c fvmpor.cpp
+	$(CC) $(OPTS) $(INCLUDE) -c fvmpor.cpp -o fvmpor.o
 
 fvmpor_DAE.o : fvmpor_DAE.h preconditioner_dss.h fvmpor_DAE.cpp
 	$(CC) $(OPTS) $(INCLUDE) -c fvmpor_DAE.cpp
@@ -92,13 +93,13 @@ preconditioner_parms_DAE.o : preconditioner_parms_DAE.h preconditioner_parms_DAE
 	$(CC) $(OPTS) $(INCLUDE) -c preconditioner_parms_DAE.cpp
 
 preconditioner_dss.o : preconditioner_dss.h preconditioner_dss.cpp
-	$(CC) $(OPTS) $(INCLUDE) -c preconditioner_dss.cpp
+	$(CC) $(OPTS) $(INCLUDE) -c preconditioner_dss.cpp -o preconditioner_dss.o
 
 preconditioner_dss_DAE.o : preconditioner_dss_DAE.h preconditioner_dss_DAE.cpp
 	$(CC) $(OPTS) $(INCLUDE) -c preconditioner_dss_DAE.cpp
 
 shape.o : shape.h shape.cpp
-	$(CC) $(OPTS) $(INCLUDE) -c shape.cpp
+	$(CC) $(OPTS) $(INCLUDE) -c shape.cpp -o shape.o
 
 parms_wrapper.o : parms_wrapper.c
 	$(cc) $(OPTS) $(parmsOPTS) $(INCLUDE) -c parms_wrapper.c

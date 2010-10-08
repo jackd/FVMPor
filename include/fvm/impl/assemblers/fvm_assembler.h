@@ -46,7 +46,7 @@ private:
 template<class Physics>
 FVMAssembler<Physics>::FVMAssembler(const Mesh& m, Physics& p)
     : m(m), p(p), is_dirichlet(m.local_nodes()) {
-    mpicomm_ = m.mpicomm();    
+    mpicomm_ = m.mpicomm();
 }
 
 template<class Physics>
@@ -105,13 +105,6 @@ int FVMAssembler<Physics>::compute_residual(
             }
         }
 
-        /*
-        for (i=0; i < mesh().nodes(); ++i) {
-            std::cout << i << "\t" << u[i] << "\t" << up[i] << "\t" << res[i] << std::endl;
-        }
-        if(physics().calls()>1)
-            exit(1);
-        */
     }
 
     // Volume averaged terms
@@ -130,6 +123,16 @@ int FVMAssembler<Physics>::compute_residual(
         value_type left = physics().lhs(time, v, u, up);
         subtract_in_place(res[i], left);
     }
+
+    /*
+    for(int i=0; i<m.local_nodes(); i++)
+        std::cout << res[i].h << " ";
+    std::cout << std::endl;
+    for(int i=0; i<m.local_nodes(); i++)
+        std::cout << res[i].M << " ";
+    std::cout << std::endl;
+    exit(0);
+    */
 
     // Postprocess
     physics().postprocess_evaluation(time, mesh(), u, up);

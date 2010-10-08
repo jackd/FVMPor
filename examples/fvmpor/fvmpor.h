@@ -866,7 +866,7 @@ public:
         }
 
         shape_matrix = InterpolationMatrix(ia, ja, shape_val);
-        shape_matrix.write_to_file(std::string("/home/cummingb/imat.m"), file_format_matlab);
+        //shape_matrix.write_to_file(std::string("/home/cummingb/imat.m"), file_format_matlab);
         shape_gradient_matrixX = InterpolationMatrix(ia, ja, shape_dx);
         shape_gradient_matrixY = InterpolationMatrix(ia, ja, shape_dy);
         if (dimension == 3)
@@ -911,7 +911,7 @@ public:
         }
 
         flux_lim_matrix = InterpolationMatrix(ia_fl, ja_fl, weights_fl);
-        flux_lim_matrix.write_to_file(std::string("/home/cummingb/flmat.m"), file_format_matlab);
+        //flux_lim_matrix.write_to_file(std::string("/home/cummingb/flmat.m"), file_format_matlab);
 
     }
 

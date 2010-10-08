@@ -128,7 +128,6 @@ try {
     *mpicomm << "initialised solver" << std::endl;
 #endif
 
-
     //double maxTimestep = 30.*60.;
     //double maxTimestep = 6.*60.*60.;
     double maxTimestep = 0.;

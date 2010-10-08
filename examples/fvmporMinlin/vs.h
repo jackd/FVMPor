@@ -78,9 +78,11 @@ void VarSatPhysicsImpl<CoordLocal,CoordCompute>::set_boundary_conditions(){
 
     // inflow on top LHS boundary
     boundary_conditions_h_[2] = BoundaryCondition::PrescribedFlux(-2.e-5);
+    //boundary_conditions_h_[2] = BoundaryCondition::Dirichlet(0.);
 
     // rhs boundary
-    boundary_conditions_h_[3] = BoundaryCondition::PrescribedFlux(0.);
+    //boundary_conditions_h_[3] = BoundaryCondition::PrescribedFlux(0.);
+    boundary_conditions_h_[3] = BoundaryCondition::Hydrostatic(-1.,0.);
 }
 
 }

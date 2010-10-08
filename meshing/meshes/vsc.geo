@@ -1,6 +1,6 @@
-width = 1;
+width = 2;
 height = 1;
-lc = height/51;
+lc = height/11;
 holeWidth = .5;
 factor = 1/1.5;
 

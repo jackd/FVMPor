@@ -31,33 +31,6 @@ namespace fvmpor {
     using util::DoubleVector;
 
     template<>
-    Physics::value_type Physics::flux(double t, const mesh::CVFace& cvf, const_iterator sol) const{
-        Physics::value_type result;
-        int id = cvf.id();
-
-        result.h = M_flux_faces[id];
-        result.M = std::numeric_limits<double>::quiet_NaN();
-
-        return result;
-    }
-
-    template<>
-    Physics::value_type Physics::boundary_flux(double t, const mesh::CVFace& cvf, const_iterator sol) const{
-        Physics::value_type result;
-        int id = cvf.id();
-
-        result.h = M_flux_faces[id];
-        result.M = std::numeric_limits<double>::quiet_NaN();
-
-        return result;
-    }
-
-    double det( double a11, double a12, double a21, double a22 )
-    {
-        return a11*a22 - a21*a12;
-    }
-
-    template<>
     void Physics::initialise(double& t, const mesh::Mesh& m,
                              iterator u, iterator udash, iterator temp,
                              Callback compute_residual)
@@ -65,52 +38,33 @@ namespace fvmpor {
         // allocate storage
         initialise_vectors( m );
 
+        // allocate working space for the residual computation
+        res_tmp = TVecDevice(2*m.local_nodes());
+        res_tmp_host = TVec(2*m.local_nodes());
+
         // Set initial values
         set_initial_conditions(t, m);
+        TVec h_host( h_vec );
         for( int i=0; i<m.local_nodes(); i++ ){
-            u[i].h = h_vec[i];
-            udash[i].M = 0;
+            u[i].h = h_host[i];
+            udash[i].h = 0.;
+            udash[i].M = 0.;
         }
 
-        // set M and C according to pressure and concentration 
+        // set M according to pressure 
         process_volumes_psk( m ); // find theta for each volume
+        TVec rho_host(rho_vec);
+        TVec theta_host(theta_vec);
         for( int i=0; i<m.local_nodes(); i++ ){
-            u[i].M = rho_vec[i]*theta_vec[i];
-            //std::cout << u[i].M << " " << rho_vec[i] << " " << theta_vec[i] << std::endl;
+            u[i].M = rho_host[i]*theta_host[i];
         }
 
         // Compute residual
         compute_residual(temp, true);
 
-        // determine the derivative coefficients
-        process_derivative_coefficients( m );
-
         // Set initial derivatives
-        for( int f=0; f<m.interior_cvfaces(); f++ ){
-            int front_id = m.cvface(f).front().id();
-            double vol = m.volume(front_id).vol();
-            if (front_id < m.local_nodes()){
-                udash[front_id].M += M_flux_faces[f]/vol;
-            }
-            int back_id = m.cvface(f).back().id();
-            vol = m.volume(back_id).vol();
-            if (back_id < m.local_nodes()){
-                udash[back_id].M -= M_flux_faces[f]/vol;
-            }
-        }
-        for( int f=m.interior_cvfaces(); f<m.cvfaces(); f++){
-            int back_id = m.cvface(f).back().id();
-            double vol = m.volume(back_id).vol();
-            if (back_id < m.local_nodes()){
-                udash[back_id].M -= M_flux_faces[f]/vol;
-            }
-        }
-        /*
-        for(int i=0; i<m.local_nodes(); i++){
-            if(fabs(udash[i].M)>1e-10)
-                //std::cout << i << " " << u[i].h << " " << u[i].M << " " << udash[i].h  << " " << udash[i].M << std::endl;  
-        }
-        */
+        for(int i=0; i<m.local_nodes(); i++)
+            udash[i].M = res_tmp_host[2*i+1];
     }
 
     template<>
@@ -132,8 +86,19 @@ namespace fvmpor {
 
         // Copy h from solution vector to h_vec and c_vec
         const double* source = reinterpret_cast<const double*>(&u[0]);
-        vdPackI(m.nodes(), &source[0], 2, &h_vec[0]);
-
+        const double* source_p = reinterpret_cast<const double*>(&udash[0]);
+        if( CoordTraits<impl::CoordDeviceInt>::is_device() ){
+            TVecDevice tmp_vec(source, source + 2*m.local_nodes());
+            h_vec(all) = tmp_vec(1,2,2*m.local_nodes());
+            M_vec_(all) = tmp_vec(2,2,2*m.local_nodes());
+            TVecDevice tmp_vec2(source_p, source_p + 2*m.local_nodes());
+            Mp_vec_(all) = tmp_vec2(2,2,2*m.local_nodes());
+        }
+        else{
+            vdPackI(m.nodes(), &source[0], 2, h_vec.data());
+            vdPackI(m.nodes(), &source[1], 2, M_vec_.data());
+            vdPackI(m.nodes(), &source_p[1], 2, Mp_vec_.data());
+        }
         // h and gradient at CV faces
         shape_matrix.matvec( h_vec, h_faces );
         shape_gradient_matrixX.matvec( h_vec, grad_h_faces_.x() );
@@ -149,41 +114,58 @@ namespace fvmpor {
         process_faces_lim( m );
         // compute fluxes
         process_fluxes( t, m );
+
+    }
+
+    template<>
+    void Physics::residual_evaluation( double t, const mesh::Mesh& m,
+                                       const_iterator sol, const_iterator deriv,
+                                       iterator res)
+    {
+        // collect fluxes to CVs
+        //cvflux_matrix.matvec(M_flux_faces, res_tmp.at(0.,m.local_nodes()-1));
+        cvflux_matrix.matvec(M_flux_faces, res_tmp.data());
+
+        // add the source terms here
+        //res_tmp += source_vec;
+
+        // subtract the lhs
+        res_tmp.at(0,m.local_nodes()-1) -= Mp_vec_;
+
+        // Dirichlet boundary conditions
+        res_tmp.at(dirichlet_nodes_)  = h_dirichlet_;
+        res_tmp.at(dirichlet_nodes_) -= h_vec.at(dirichlet_nodes_);
+        res_tmp.at(m.local_nodes(), lin::end) = mul(rho_vec, theta_vec);
+        res_tmp.at(m.local_nodes(), lin::end) -= M_vec_.at(0, m.local_nodes()-1);
+
+        // copy solution into res
+        if( CoordTraits<impl::CoordDeviceInt>::is_device() ){
+            // copy data to the host
+            cudaMemcpy( res_tmp_host.data(), res_tmp.data(),
+                        res_tmp.dim()*sizeof(double), cudaMemcpyDeviceToHost
+            );
+            //res_tmp_host.at(all) = res_tmp;
+            // distribute data in residual
+            int N = m.local_nodes();
+            double *target = reinterpret_cast<double*>(&res[0]);
+            vdUnpackI(N,  res_tmp_host.data(),    target,   2);
+            vdUnpackI(N,  res_tmp_host.data()+N,  target+1, 2);
+        }else{
+            int N = m.local_nodes();
+            double *target = reinterpret_cast<double*>(&res[0]);
+            vdUnpackI(N,  res_tmp.data(),    target,   2);
+            vdUnpackI(N,  res_tmp.data()+N,  target+1, 2);
+        }
     }
 
     template<>
     void Physics::preprocess_timestep(double t, const mesh::Mesh& m, const_iterator sol, const_iterator deriv){
         //--------------------------------
-        // determine the seepage nodes
-        //--------------------------------
-        //if( seepage_nodes.size() ){
-        if( false ){
-            // DEBUG : this call is only really needed if we wish to use fluxes for more complicated tests
-            //         for determining the seepage nodes, otherwise simply populating h_vec[] would suffice
-            //preprocess_evaluation(t, m, sol, deriv);
-
-            // set all nodes on seepage faces that have pressure head less than zero to be differential
-            for(int i=0; i<seepage_nodes.size(); i++){
-                int node = seepage_nodes[i];
-                double eps_seepage = 1e-3;
-                // is the node currently treated as dirichlet?
-                if( is_dirichlet_h_vec[node] ){
-                    if( h_vec[node]<-eps_seepage )
-                        is_dirichlet_h_vec[node] = 0;
-                }
-                else{
-                    if(h_vec[node]>eps_seepage){
-                        is_dirichlet_h_vec[node] = seepage_tag;
-                    }
-                }
-            }
-        }
-
-        //--------------------------------
         // determine the spatial weights
         //--------------------------------
-        edge_weight_back_ = 0.5;
-        edge_weight_front_ = 0.5;
+        // find upwind and downwind nodes for each face
+        edge_weight_back_.at(all) = 0.5;
+        edge_weight_front_.at(all) = 0.5;
 
         // if averaging is the required method we just return
         if( spatial_weighting==weightAveraging ){
@@ -198,6 +180,7 @@ namespace fvmpor {
 
         // find the spatial weights
         process_spatial_weights(m);
+
     }
 
     template<>
@@ -210,8 +193,8 @@ namespace fvmpor {
         result.h = udash[i].M;
 
         // Dirichlet conditions
-        if( is_dirichlet_h_vec[i] ){
-            const BoundaryCondition& bc = boundary_condition_h(is_dirichlet_h_vec[i]);
+        if( is_dirichlet_h_vec_[i] ){
+            const BoundaryCondition& bc = boundary_condition_h(is_dirichlet_h_vec_[i]);
             if( bc.type()==1 || bc.type()==7 ){
                 result.h = u[i].h - bc.value(t);
             }
@@ -230,7 +213,7 @@ namespace fvmpor {
     {
         value_type is_dirichlet = {};
 
-        if( is_dirichlet_h_vec[n.id()] )
+        if( is_dirichlet_h_vec_[n.id()] )
             is_dirichlet.h = true;
 
         // the algebraic variables are treated the same as dirichlet variables
@@ -242,18 +225,21 @@ namespace fvmpor {
     template<>
     double Physics::compute_mass(const mesh::Mesh& m, const_iterator u) {
         double total_mass = 0.;
+        /*
         const double* source = reinterpret_cast<const double*>(&u[0]);
         vdPackI(m.nodes(), &source[0], 2, &h_vec[0]);
         process_volumes_psk( m );
         for(int i=0; i<m.local_nodes(); i++)
             //total_mass += m.volume(i).vol()*u[i].M;
             total_mass += m.volume(i).vol()*theta_vec[i]*rho_vec[i];
+        */
         return total_mass;
     }
 
     template<>
     double Physics::mass_flux_per_time(const mesh::Mesh& m){
         double flux_per_time = 0.;
+        /*
         for( int i=m.interior_cvfaces(); i<m.cvfaces(); i++ )
         {
             const mesh::CVFace& cvf = m.cvface(i);
@@ -263,6 +249,7 @@ namespace fvmpor {
             if( BC.type()==3 )
                 flux_per_time -= BC.value(t) * m.cvface(i).area();
         }
+        */
 
         return flux_per_time*constants().rho_0();
     }

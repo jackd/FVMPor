@@ -7,6 +7,8 @@
 
 namespace util{
 
+enum sparse_file_format {file_format_matlab};
+
 template <typename TVec, typename TIndexVec>
 class InterpolationMatrix{
 public:

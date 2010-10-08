@@ -1,7 +1,6 @@
 #ifndef INTERPOLATION_H
 #define INTERPOLATION_H
 
-enum sparse_file_format {file_format_matlab};
 #ifndef USE_MINLIN
 #include "interpolation_legacy.h"
 #else
@@ -18,6 +17,8 @@ enum sparse_file_format {file_format_matlab};
 #include <algorithm>
 
 namespace util{
+
+enum sparse_file_format {file_format_matlab};
 
 template <typename T>
 struct CoordTraits{
@@ -73,6 +74,27 @@ public:
         double *v_ptr = const_cast<double*>(v_.data());
         assert(x.dim()==n_cols_);
         assert(y.dim()==n_rows_);
+        // GPU : use CUSPARSE
+        if( CoordTraits<CoordType>::is_device() ){
+            status_ = cusparseDcsrmv( handle_, CUSPARSE_OPERATION_NON_TRANSPOSE, n_rows_, n_cols_, 1., descra_,
+                                      v_ptr, row_ptr, col_ptr, x_ptr, 0., y_ptr);
+            assert( status_==CUSPARSE_STATUS_SUCCESS );
+        }
+        // CPU : use MKL
+        else
+        {
+            char transa = 'N';
+            // uses zero-based cspblas version of the MKL function
+            mkl_cspblas_dcsrgemv(&transa, &n_rows_, v_ptr, row_ptr, col_ptr, x_ptr, y_ptr );
+        }
+    }
+    void matvec( const TVec& x, double* y_ptr ){
+        double *x_ptr = const_cast<double*>(x.data());
+        int *row_ptr = const_cast<int*>(ia_.data());
+        int *col_ptr = const_cast<int*>(ja_.data());
+        double *v_ptr = const_cast<double*>(v_.data());
+        assert(x.dim()==n_cols_);
+        assert(y_ptr!=0);
         // GPU : use CUSPARSE
         if( CoordTraits<CoordType>::is_device() ){
             status_ = cusparseDcsrmv( handle_, CUSPARSE_OPERATION_NON_TRANSPOSE, n_rows_, n_cols_, 1., descra_,

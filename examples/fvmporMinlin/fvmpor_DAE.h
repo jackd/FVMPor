@@ -2,10 +2,19 @@
 #define FVMPOR_DAE_H
 
 #include "fvmpor.h"
-#include <util/doublevector.h>
-#include <iomanip>
+#include <lin/lin.h>
+#include <lin/coordinators/gpu/coordinator.h>
 
 namespace fvmpor {
+
+template <typename T>
+struct CoordTraits{
+    static bool is_device() {return false;};
+};
+template <>
+struct CoordTraits<lin::gpu::Coordinator<int> >{
+    static bool is_device() {return true;};
+};
 
 struct hM {
     double h;
@@ -29,7 +38,12 @@ struct hM {
     }
 };
 
-typedef VarSatPhysics<hM, util::DoubleVector> Physics;
+typedef lin::DefaultCoordinator<int> CPUCoord;
+typedef lin::gpu::Coordinator<int> GPUCoord;
+
+typedef VarSatPhysics<hM, CPUCoord, GPUCoord> PhysicsGPU;
+typedef VarSatPhysics<hM, CPUCoord, CPUCoord> PhysicsCPU;
+typedef PhysicsGPU Physics;
 
 } // end namespace fvmpor
 

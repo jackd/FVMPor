@@ -75,6 +75,8 @@ public:
     void set_max_order(int);
     double max_timestep() const;
     int max_order() const;
+    void set_algebraic_variables(const std::vector<double> &vals);
+    void compute_initial_conditions(iterator u0, iterator up0);
 
     // return pointer to the step orders
     const std::vector<int>& step_orders() const{
@@ -106,12 +108,14 @@ private:
     double atol;
     double max_timestep_;
     int max_order_;
+    bool variableids_set_;
     N_Vector atolv;
     N_Vector weights;
     N_Vector ulocal;
     N_Vector uplocal;
     N_Vector uinterp;
     N_Vector upinterp;
+    N_Vector variableids; // specify algebraic/differential variables
 
     std::vector<int> step_orders_;
     std::vector<double> step_sizes_;
@@ -139,7 +143,7 @@ private:
                       void*,
                       N_Vector tmp);
 
-}; 
+};
 
 /*
 template<class Physics, class Preconditioner>
@@ -155,14 +159,14 @@ IDAIntegrator(const Mesh& mesh, Preconditioner& pc, double rtol, double atol)
 template<class Physics, class Preconditioner>
 IDAIntegrator<Physics, Preconditioner>::
 IDAIntegrator(const Mesh& mesh, Physics& physics, double rtol, double atol)
-    : m(mesh), physics(physics), pc(), t(), ida_mem(), rtol(rtol), atol(atol), max_timestep_(0.), max_order_(5) {
+    : m(mesh), physics(physics), pc(), t(), ida_mem(), rtol(rtol), atol(atol), max_timestep_(0.), max_order_(5), variableids_set_(false) {
     procinfo = m.mpicomm()->duplicate("IDA");
 }
 
 template<class Physics, class Preconditioner>
 IDAIntegrator<Physics, Preconditioner>::
 IDAIntegrator(const Mesh& mesh, Physics& physics, Preconditioner& pc, double rtol, double atol)
-    : m(mesh), physics(physics), pc(&pc), t(), ida_mem(), rtol(rtol), atol(atol), max_timestep_(0.), max_order_(5) {
+    : m(mesh), physics(physics), pc(&pc), t(), ida_mem(), rtol(rtol), atol(atol), max_timestep_(0.), max_order_(5), variableids_set_(false) {
     procinfo = m.mpicomm()->duplicate("IDA");
 }
 
@@ -225,6 +229,12 @@ initialise(double& tt, iterator y, iterator yp, Callback callback)
         mesh().local_nodes() * variables_per_node,
         atol);
 
+    variableids = N_VNew_Parallel(
+        procinfo->communicator(),
+        mesh().local_nodes() * variables_per_node,
+        mesh().global_nodes() * variables_per_node);
+    assert(variableids);
+
     // Create IDA data structure
     ida_mem = IDACreate();
     assert(ida_mem);
@@ -271,6 +281,7 @@ IDAIntegrator<Physics, Preconditioner>::~IDAIntegrator()
         N_VDestroy_Parallel(upinterp);
         N_VDestroy_Parallel(weights);
         N_VDestroy_Parallel(atolv);
+        N_VDestroy_Parallel(variableids);
         IDAFree(&ida_mem);
     }
 }
@@ -380,6 +391,105 @@ template<class Physics, class Preconditioner>
 void IDAIntegrator<Physics, Preconditioner>::set_tolerances() {
     int flag = IDASVtolerances(ida_mem, rtol, atolv);
     assert(flag == IDA_SUCCESS);
+}
+
+// set the variable ids
+// this allows the user to specify which variables are algabraic and which
+// are differential.
+// vals[i]=0. -> variable i is algebraic
+// vals[i]=1. -> variable i is differntial
+template<class Physics, class Preconditioner>
+void IDAIntegrator<Physics, Preconditioner>::set_algebraic_variables(const std::vector<double> &vals){
+    // sanity check the input
+    assert(vals.size()==variables_per_node*m.local_nodes());
+    for(int i=0; i<vals.size(); i++)
+        assert(vals[i]==0. || vals[i]==1.);
+
+    // copy user specified variable ids into NV_Vector
+    double* dest = reinterpret_cast<double*>(NV_DATA_P(variableids));
+    std::copy(vals.begin(), vals.end(), dest);
+    // call IDA to set the ids
+    int flag = IDASetId(ida_mem, variableids);
+    assert(flag == IDA_SUCCESS);
+    variableids_set_=true;
+}
+
+// compute consistent initial conditions
+// if IDAIntegrator::set_algebraic_variables() has been called the method
+// will attempt to find derivatives for the differential variabels
+// and values for the algebraic variables
+template<class Physics, class Preconditioner>
+void IDAIntegrator<Physics, Preconditioner>::compute_initial_conditions(iterator u0, iterator up0){
+    int icopt = IDA_Y_INIT;
+    if(variableids_set_){
+        icopt = IDA_YA_YDP_INIT;
+    }
+
+    int flag = IDACalcIC(ida_mem, icopt, (*t)+1.);
+    assert(flag==IDA_SUCCESS);
+
+    // get the initial conditions
+    N_Vector yy0_mod, yp0_mod;
+    yy0_mod = N_VNew_Parallel(
+        procinfo->communicator(),
+        mesh().local_nodes() * variables_per_node,
+        mesh().global_nodes() * variables_per_node);
+    assert(yy0_mod);
+    yp0_mod = N_VNew_Parallel(
+        procinfo->communicator(),
+        mesh().local_nodes() * variables_per_node,
+        mesh().global_nodes() * variab[phi tfin Iterations Newtons Jacobians]les_per_node);
+    assert(yp0_mod);
+
+    flag = IDAGetConsistentIC(ida_mem, yy0_mod, yp0_mod);
+    // output to file
+    /*
+    std::ofstream fid("IC.m");
+    value_type* temp = reinterpret_cast<value_type*>(NV_DATA_P(yy0_mod));
+    // h0
+    fid << "h0 = [" << temp[0].h;
+    for(int i=1; i<mesh().local_nodes(); i++)
+        fid << ", " << temp[i].h;
+    fid << "];" << std::endl;
+    // c0
+    fid << "c0 = [" << temp[0].c;
+    for(int i=1; i<mesh().local_nodes(); i++)
+        fid << ", " << temp[i].c;
+    fid << "];" << std::endl;
+    temp = reinterpret_cast<value_type*>(NV_DATA_P(yp0_mod));
+    // hp0
+    fid << "hp0 = [" << temp[0].h;
+    for(int i=1; i<mesh().local_nodes(); i++)
+        fid << ", " << temp[i].h;
+    fid << "];" << std::endl;
+    // cp0
+    fid << "cp0 = [" << temp[0].c;
+    for(int i=1; i<mesh().local_nodes(); i++)
+        fid << ", " << temp[i].c;
+    fid << "];" << std::endl;
+    // x
+    fid << "x = [" << mesh().node(0).point().x;
+    for(int i=1; i<mesh().local_nodes(); i++)
+        fid << ", " << mesh().node(i).point().x;
+    fid << "];" << std::endl;
+    // y
+    fid << "y = [" << mesh().node(0).point().y;
+    for(int i=1; i<mesh().local_nodes(); i++)
+        fid << ", " << mesh().node(i).point().y;
+    fid << "];" << std::endl;
+    fid.close();
+    */
+
+    std::copy(
+        reinterpret_cast<value_type*>(NV_DATA_P(yy0_mod)),
+        reinterpret_cast<value_type*>(NV_DATA_P(yy0_mod)) + variables_per_node*mesh().local_nodes(),
+        u0
+    );
+    std::copy(
+        reinterpret_cast<value_type*>(NV_DATA_P(yp0_mod)),
+        reinterpret_cast<value_type*>(NV_DATA_P(yp0_mod)) + variables_per_node*mesh().local_nodes(),
+        up0
+    );
 }
 
 // set the maximum timestep taken by IDA

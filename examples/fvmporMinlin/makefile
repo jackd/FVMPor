@@ -18,7 +18,7 @@ LIBS=-L/opt/parmetis -L/opt/sundials2.4.0/lib -L/usr/local/cuda/lib64
 MINLIN=/home/cummingb/projects/minlin
 else
 INCLUDE=-I../../include -I/opt/intel/impi/3.2/include -I/opt/intel/Compiler/11.1/069/mkl/include -I/home/cummingb/include
-MKL=-lmkl_intel_thread -lmkl_intel -lmkl_core -liomp5
+MKL=-lmkl_intel_threa
 LIBS=-L/opt/intel/impi/3.2/lib -L/opt/intel/Compiler/11.1/069/mkl/lib/32 -L/opt/intel/Compiler/11.1/069/lib/ia32 -L/home/cummingb/lib
 endif
 
@@ -33,13 +33,13 @@ UTIL=$(MINLIN)/cuda.o
 #PRECON=parms_wrapper.o preconditioner_parms.o
 #PRECON_DAE=parms_wrapper.o preconditioner_parms_DAE.o
 
-preconOPTS=-DPRECON_DSS -DPRECON
-PRECON=preconditioner_dss.o
-PRECON_DAE=preconditioner_dss_DAE.o
+#preconOPTS=-DPRECON_DSS -DPRECON
+#PRECON=preconditioner_dss.o
+#PRECON_DAE=preconditioner_dss_DAE.o
 
-#preconOPTS=
-#PRECON_DAE=
-#PRECON=
+preconOPTS=
+PRECON_DAE=
+PRECON=
 
 IMPLEMENTATIONDEPS_ODE=fvmpor_ODE.o fvmpor.o shape.o $(MESH) $(UTIL) $(PRECON)
 IMPLEMENTATIONDEPS_DAE=fvmpor_DAE.o fvmpor.o shape.o $(MESH) $(UTIL) $(PRECON_DAE)

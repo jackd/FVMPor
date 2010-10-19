@@ -140,6 +140,30 @@ try {
 
     *mpicomm << "set integrator max timestep (" << maxTimestep << ") and max order ("  << maxOrder <<  ")" << std::endl;
 
+    std::vector<double> variableIDs(2*mesh.local_nodes());
+    for( int i=0; i<mesh.local_nodes(); i++ ){
+        int N=mesh.nodes();
+        variableIDs[2*i] = 1.;
+        variableIDs[2*i+1] = 0.;
+        //if( physics.dirichlet(solver.time(), mesh.node(i)).c==true )
+        //    variableIDs[i*N+1] = 0.;
+    }
+    std::vector<hc> y0(2*mesh.local_nodes());
+    std::vector<hc> yp0(2*mesh.local_nodes());
+    integrator.set_algebraic_variables(variableIDs);
+    std::cerr << "finding initial conditions..." << std::endl;
+    integrator.compute_initial_conditions(&y0[0], &yp0[0]);
+    std::cerr << "finished" << std::endl;
+
+    ////////////////// DEBUG ///////////////////
+    util::Solution<hc> solutionICp(mpicomm);
+    solutionICp.add( 0., &yp0[0], &yp0[2*mesh.local_nodes()]+1 );
+    solutionICp.write_timestep_VTK_XML( 0, mesh, "ICp" );
+    util::Solution<hc> solutionIC(mpicomm);
+    solutionIC.add( 0., &y0[0], &y0[2*mesh.local_nodes()]+1 );
+    solutionIC.write_timestep_VTK_XML( 0, mesh, "IC" );
+    ////////////////// DEBUG ///////////////////
+
     std::string filename;
     bool output_run = false;
     if(argc == 4){
@@ -148,12 +172,14 @@ try {
     }
 
     // save the initial conditions
-    util::Solution<Head> solution(mpicomm);
+    util::Solution<hc> solution(mpicomm);
     double t0 = solver.time();
     if(output_run){
         solution.add( t0, solver.begin(), solver.end_ext() );
         solution.write_timestep_VTK_XML( 0, mesh, filename );
     }
+
+
     //int nt = round(final_time/3600);
     int nt = 11;
 

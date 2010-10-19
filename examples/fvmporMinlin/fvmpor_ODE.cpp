@@ -131,7 +131,7 @@ try {
     //double maxTimestep = 30.*60.;
     //double maxTimestep = 6.*60.*60.;
     double maxTimestep = 0.;
-    int maxOrder = 3;
+    int maxOrder = 5;
     if(maxTimestep>0.)
         integrator.set_max_timestep(maxTimestep);
     if(maxOrder!=5)

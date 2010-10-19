@@ -53,7 +53,6 @@ public:
     InterpolationMatrix( TIndexVecHost& ia, TIndexVecHost& ja, TVecHost& v ):
         ia_(ia), ja_(ja), v_(v)
     {
-
         n_rows_ = ia_.size() - 1;
         nnz_ = ja_.size();
         n_cols_ = *(std::max_element(ja.begin(),ja.end())) + 1;

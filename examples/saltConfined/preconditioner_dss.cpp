@@ -108,6 +108,9 @@ ColumnPattern column_pattern(const mesh::Mesh& m, int blocksize)
 {
     // Determine the set of (i,j) coordinates
     MatrixPattern matpat;
+    //////////////////////////
+    MatrixPattern matpat_single;
+    //////////////////////////
     for (int i = 0; i < m.elements(); ++i) {
         const mesh::Element& e = m.element(i);
         for (int j = 0; j < e.nodes(); ++j) {
@@ -117,6 +120,9 @@ ColumnPattern column_pattern(const mesh::Mesh& m, int blocksize)
                     const mesh::Node& nb = e.node(k);
                     if (nb.id() < m.local_nodes()) {
                         insert_block(matpat, n.id(), nb.id(), blocksize);
+                        //////////////////////////
+                        matpat_single.insert(std::make_pair(n.id(), nb.id()));
+                        //////////////////////////
                     }
                 }
             }
@@ -265,6 +271,25 @@ int Preconditioner::setup(
             ++p;
         }
     }
+
+    /////////////////////////////////////// DEBUG ///////////////////////////////////////
+    std::ofstream fid("precon.txt"); 
+    for(int i=0; i<N; i++){
+        for(int j=row_index[i]-1; j<row_index[i+1]-1; j++){
+            fid << i+1 << " " << columns[j] << " " << values[j] << std::endl;
+        }
+    }
+    int minCol = 1000;
+    int maxCol = 0;
+    for(int i=0; i<columns.size(); i++){
+            if(columns[i]<minCol)
+                minCol = columns[i];
+            if(columns[i]>maxCol)
+                maxCol = columns[i];
+    }
+
+    fid.close();
+    /////////////////////////////////////// DEBUG ///////////////////////////////////////
 
     // Factorise
     int opt = MKL_DSS_INDEFINITE;

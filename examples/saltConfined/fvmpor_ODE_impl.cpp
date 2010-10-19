@@ -1,8 +1,10 @@
 #include "fvmpor_ODE.h"
 #include "shape.h"
-#ifdef PROBLEM_CASSION
-#include "cassion.h"
+#ifdef PROBLEM_HENRY
+#include "henry.h"
 #endif
+
+#include <stdio.h>
 
 #include <mkl_vml_functions.h>
 
@@ -29,56 +31,31 @@ namespace fvmpor {
     using util::DoubleVector;
 
     template<>
-    Physics::value_type Physics::flux(double t, const mesh::CVFace& cvf, const_iterator sol) const{
-        Physics::value_type result;
-        int id = cvf.id();
-
-        result.h = M_flux_faces[id];
-        result.c = C_flux_faces[id];
-
-        return result;
-    }
-
-    template<>
-    Physics::value_type Physics::boundary_flux(double t, const mesh::CVFace& cvf, const_iterator sol) const{
-        Physics::value_type result;
-        int id = cvf.id();
-
-        result.h = M_flux_faces[id];
-        result.c = C_flux_faces[id];
-
-        return result;
-    }
-
-    double det( double a11, double a12, double a21, double a22 )
-    {
-        return a11*a22 - a21*a12;
-    }
-
-    template<>
     void Physics::initialise(double& t, const mesh::Mesh& m,
                              iterator u, iterator udash, iterator temp,
                              Callback compute_residual)
     {
+        std::cerr << "The mesh has " << m.nodes() << " nodes, " << m.cvfaces() << ", " << m.interior_cvfaces() << " CV faces, " << m.elements() << " elements, and " << m.edges() << " edges."<< std::endl; 
+
         // allocate storage
         initialise_vectors( m );
 
+        // allocate working space for the residual computation
+        res_tmp = TVecDevice(2*m.local_nodes());
+        res_tmp_host = TVec(2*m.local_nodes());
+
         // Set initial values
         set_initial_conditions(t, m);
+        TVec h_vec_host(h_vec_);
+        TVec c_vec_host(c_vec_);
         for( int i=0; i<m.local_nodes(); i++ ){
-            u[i].h = h_vec[i];
-            u[i].c = c_vec[i];
+            // we still set h specifically on the assumption that set_initial_conditions() has
+            // had a stab at ballpark initial values, and to catch any dirichlet values
+            u[i].c = c_vec_host[i];
+            u[i].h = h_vec_host[i];
         }
 
-        // Compute residual
-        compute_residual(temp, true);
-
-        // Set initial derivatives
-        for (int i = 0; i < m.local_nodes(); ++i) {
-            const mesh::Node& n = m.node(i);
-            Point p = n.point();
-            double x = p.x;
-        }
+        // rely on the user calling
     }
 
     template<>
@@ -93,21 +70,23 @@ namespace fvmpor {
         }
 
         // Copy h and c over to h_vec and c_vec
-        const double* source = reinterpret_cast<const double*>(&u[0]);
-        vdPackI(m.nodes(), &source[0], 2, &h_vec[0]);
-        vdPackI(m.nodes(), &source[1], 2, &c_vec[0]);
+        const double* source   = reinterpret_cast<const double*>(&u[0]);
+        const double* source_p = reinterpret_cast<const double*>(&udash[0]);
+        vdPackI(m.nodes(), &source[0],   2, &c_vec_[0]);
+        vdPackI(m.nodes(), &source[1],   2, &h_vec_[0]);
+        vdPackI(m.nodes(), &source_p[0], 2, &cp_vec_[0]);
 
         // Compute shape function values and gradients
-        shape_matrix.matvec( h_vec, h_faces );
-        shape_matrix.matvec( c_vec, c_faces );
-        shape_gradient_matrixX.matvec( h_vec, grad_h_faces_.x() );
-        shape_gradient_matrixY.matvec( h_vec, grad_h_faces_.y() );
+        shape_matrix.matvec( h_vec_, h_faces_ );
+        shape_matrix.matvec( c_vec_, c_faces_ );
+        shape_gradient_matrixX.matvec( h_vec_, grad_h_faces_.x() );
+        shape_gradient_matrixY.matvec( h_vec_, grad_h_faces_.y() );
         if (dimension == 3)
-            shape_gradient_matrixZ.matvec( h_vec, grad_h_faces_.z() );
-        shape_gradient_matrixX.matvec( c_vec, grad_c_faces_.x() );
-        shape_gradient_matrixY.matvec( c_vec, grad_c_faces_.y() );
+            shape_gradient_matrixZ.matvec( h_vec_, grad_h_faces_.z() );
+        shape_gradient_matrixX.matvec( c_vec_, grad_c_faces_.x() );
+        shape_gradient_matrixY.matvec( c_vec_, grad_c_faces_.y() );
         if (dimension == 3)
-            shape_gradient_matrixZ.matvec( c_vec, grad_c_faces_.z() );
+            shape_gradient_matrixZ.matvec( c_vec_, grad_c_faces_.z() );
 
         // determine the p-s-k values
         process_volumes_psk( m );
@@ -131,8 +110,8 @@ namespace fvmpor {
         // determine the spatial weights
         //--------------------------------
         // find upwind and downwind nodes for each face
-        edge_weight_back_ = 0.5;
-        edge_weight_front_ = 0.5;
+        edge_weight_back_.at(all) = 0.5;
+        edge_weight_front_.at(all) = 0.5;
 
         // if averaging is the required method we just return
         if( spatial_weighting==weightAveraging )
@@ -149,40 +128,148 @@ namespace fvmpor {
     }
 
     template<>
-    Physics::value_type Physics::lhs(double t, const mesh::Volume& volume,
-                                     const_iterator u, const_iterator udash) const
+    void Physics::residual_evaluation( double t, const mesh::Mesh& m,
+                                       const_iterator sol, const_iterator deriv,
+                                       iterator res)
     {
-        int i = volume.id();
-        value_type result;
+        int N = m.local_nodes();
 
-        //result.h = ahh_vec[i]*udash[i].h;
-        result.h = ahh_*udash[i].h + ahc_*udash[i].c;
-        result.c = ach_*udash[i].h + acc_*udash[i].c;
+        // collect fluxes to CVs
+        res_tmp.zero();
 
-        // Dirichlet conditions
-        if( is_dirichlet_h_vec[i] ){
-            const BoundaryCondition& bc = boundary_condition_h(is_dirichlet_h_vec[i]);
-            if( bc.type()==1 ){
-                result.h = u[i].h - bc.value(t);
+        double factor = constants().rho_0() * (1.+constants().eta());
+
+        cvflux_matrix.matvec(M_flux_faces_, res_tmp.data()+m.local_nodes());
+        cvflux_matrix.matvec(C_flux_faces_, res_tmp.data());
+
+        ///////////////////////////////
+        /*
+        std::cerr << std::endl;
+        for(int i=0; i<M_flux_faces_.dim(); i++)
+            //if(fabs(M_flux_faces_[i])>1e-16)
+            //if(  (fabs(res_tmp[m.cvface(i).back().id()+N])>1e-16
+            //        || (i<m.interior_cvfaces() && fabs(res_tmp[m.cvface(i).front().id()+N])>1e-16))
+            //        && fabs(M_flux_faces_[i])>1e-10
+            //  )
+            if(m.cvface(i).back().id()==5 || (i<m.interior_cvfaces() && m.cvface(i).front().id()==5))
+            {
+                fprintf(stderr, "%d (%7g,%7g)\t:\t%15.14g\t%15.14g\n", i,
+                            m.cvface(i).centroid().x, m.cvface(i).centroid().y,
+                            M_flux_faces_[i], C_flux_faces_[i] );
+                fprintf(stderr, "%d (%7g,%7g)\t:\t%15.14g\t%15.14g\n", i,
+                            m.cvface(i).centroid().x, m.cvface(i).centroid().y,
+                            qdotn_faces_[i], qcdotn_faces_[i] );
             }
-            else{
-                double el = dimension == 2 ? volume.node().point().y : volume.node().point().z;
-                if(bc.type()==4)
-                    result.h = u[i].h - bc.hydrostatic(t, el);
-                else{
-                    result.h = u[i].h - bc.hydrostatic_shore(t, el);
-                }
-            }
+        std::cerr << std::endl;
+        for(int i=0; i<N; i++){
+            //if(m.node(i).point().x==0 || m.node(i).point().x==200)
+            if( fabs(res_tmp[i+N]) > 1e-10 )
+                fprintf(stderr, "%d (%7g,%7g)\t:\t%5.4g\t%5.4g\n", i, m.node(i).point().x, m.node(i).point().y, res_tmp[i+N], res_tmp[i] );
         }
-        if( is_dirichlet_c_vec[i] ){
-            const BoundaryCondition& bc = boundary_condition_c(is_dirichlet_c_vec[i]);
-            assert(bc.type()==1);
-            result.c = u[i].c - bc.value(t);
+        exit(0);
+        */
+        ///////////////////////////////
+        res_tmp.at(0,N-1) *= factor;
+
+        for(int i=0; i<N; i++)
+            res_tmp[i+N] -= res_tmp[i];
+
+        cvflux_matrix.matvec(C_flux_faces_, res_tmp.data());
+        //for(int i=0; i<N; i++)
+        //    res_tmp[i] /= m.volume(i).vol();
+        res_tmp.at(0,N-1) /= phi_vec_;
+        //res_tmp.at(0,N-1) -= cp_vec_.at(0,N-1);
+        for(int i=0; i<N; i++)
+            res_tmp[i] -= cp_vec_[i];
+
+        // Dirichlet boundary conditions
+        for(int i=0; i<dirichlet_h_nodes_.dim(); i++){
+            res_tmp.at(dirichlet_h_nodes_[i]+N)  = dirichlet_h_[i] - h_vec_[dirichlet_h_nodes_[i]];
+        }
+        for(int i=0; i<dirichlet_c_nodes_.dim(); i++){
+            res_tmp.at(dirichlet_c_nodes_[i])  = dirichlet_c_[i] - c_vec_[dirichlet_c_nodes_[i]];
         }
 
-        return result;
+        for(int i=0; i<N; i++){
+            res[i].c = res_tmp[i];
+            res[i].h = res_tmp[N+i];
+        }
+
+        /////////////////////////////////////////////////////////////////////////////////////////////
+        /*
+        std::cerr << "RESIDUAL" << std::endl << "================================" << std::endl;
+        for(int i=0; i<N; i++)
+            std::cerr << i << "\t" << sol[i].c << "\t" << sol[i].h << "\t" << res[i].c << "\t" << res[i].h << std::endl;
+        std::cerr << std::endl;
+        */
+        /////////////////////////////////////////////////////////////////////////////////////////////
     }
 
+    /*
+    template<>
+    void Physics::residual_evaluation_old( double t, const mesh::Mesh& m,
+                                       const_iterator sol, const_iterator deriv,
+                                       iterator res)
+    {
+        int N = m.local_nodes();
+
+        // collect fluxes to CVs
+        res_tmp.zero();
+
+        double factor = 1./( constants().rho_0() * (1.+constants().eta()) );
+
+        cvflux_matrix.matvec(M_flux_faces_, res_tmp.data());
+        res_tmp.at(0,N-1) *= factor;
+        cvflux_matrix.matvec(C_flux_faces_, res_tmp.data()+m.local_nodes());
+
+        ///////////////////////////////
+        std::cerr << "residual on device" << std::endl << "============================================" << std::endl;
+        for(int i=0; i<N; i++)
+            std::cerr <<  i << " : " << res_tmp[i] << " , " << res_tmp[i+N] << std::endl;       
+        std::cerr << std::endl;
+        ///////////////////////////////
+
+        //res_tmp.at(N,lin::end) -= res_tmp.at(0,N-1);
+        for(int i=0; i<N; i++)
+            res_tmp[i+N] -= res_tmp[i];
+
+        ///////////////////////////////
+        std::cerr << "residual on device" << std::endl << "============================================" << std::endl;
+        for(int i=0; i<N; i++)
+            std::cerr <<  i << " : " << res_tmp[i] << " , " << res_tmp[i+N] << std::endl;       
+        std::cerr << std::endl;
+        ///////////////////////////////
+
+        res_tmp.at(0,N-1) /= phi_vec_;
+
+        // subtract the lhs
+        res_tmp.at(0,N-1) -= cp_vec_.at(0,N-1);
+
+        // Dirichlet boundary conditions
+        for(int i=0; i<dirichlet_h_nodes_.dim(); i++){
+            res_tmp.at(dirichlet_h_nodes_[i]+N)  = dirichlet_h_[i] - h_vec_[dirichlet_h_nodes_[i]];
+        }
+        for(int i=0; i<dirichlet_c_nodes_.dim(); i++){
+            res_tmp.at(dirichlet_c_nodes_[i])  = dirichlet_c_[i] - c_vec_[dirichlet_c_nodes_[i]];
+        }
+        std::cerr << "residual on device" << std::endl << "============================================" << std::endl;
+        for(int i=0; i<N; i++)
+            std::cerr <<  i << " : " << res_tmp[i] << " , " << res_tmp[i+N] << std::endl;       
+        std::cerr << std::endl;
+        // copy solution into res
+        for(int i=0; i<N; i++){
+            res[i].c = res_tmp[i];
+            res[i].h = res_tmp[N+i];
+        }
+
+        std::cerr << "RESIDUAL" << std::endl << "================================" << std::endl;
+        for(int i=0; i<N; i++)
+            std::cerr << i << "\t" << sol[i].c << "\t" << sol[i].h << "\t" << res[i].c << "\t" << res[i].h << std::endl;
+        std::cerr << std::endl;
+    }
+    */
+
+    /*
     template<>
     Physics::value_type Physics::dirichlet(double t, const mesh::Node& n) const
     {
@@ -194,21 +281,25 @@ namespace fvmpor {
             is_dirichlet.c = true;
         return is_dirichlet;
     }
+    */
 
     template<>
     double Physics::compute_mass(const mesh::Mesh& m, const_iterator u) {
         double total_mass = 0.;
+        /*
         const double* source = reinterpret_cast<const double*>(&u[0]);
-        vdPackI(m.nodes(), &source[0], 1, &h_vec[0]);
+        vdPackI(m.nodes(), &source[0], 1, &h_vec_[0]);
         process_volumes_psk( m );
         for(int i=0; i<m.local_nodes(); i++)
             total_mass += m.volume(i).vol()*theta_vec[i]*rho_vec[i];
+        */
         return total_mass;
     }
 
     template<>
     double Physics::mass_flux_per_time(const mesh::Mesh& m){
         double flux_per_time = 0.;
+        /*
         for( int i=m.interior_cvfaces(); i<m.cvfaces(); i++ )
         {
             const mesh::CVFace& cvf = m.cvface(i);
@@ -218,7 +309,7 @@ namespace fvmpor {
             if( BC.type()==3 )
                 flux_per_time -= BC.value(t) * m.cvface(i).area();
         }
-
+        */
         return flux_per_time*constants().rho_0();
     }
 

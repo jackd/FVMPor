@@ -1,7 +1,7 @@
 width = 200;
 height = 100;
 bottom = 0;
-lc = height/10 - height/1000000.; // small adjustment to ensure correct number of mesh subdivisions
+lc = height/21 - height/1000000.; // small adjustment to ensure correct number of mesh subdivisions
 
 // Points in counterclockwise order
 Point(1) = {0, bottom,      0, lc};

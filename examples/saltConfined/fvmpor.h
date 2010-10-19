@@ -6,13 +6,14 @@
 
 #include <fvm/fvm.h>
 #include <fvm/mesh.h>
-#include <fvm/solver.h>
+#include <fvm/solver_compact.h>
 #include <fvm/physics_base.h>
 
 #include <util/intvector.h>
 #include <util/interpolation.h>
 #include <util/dimvector.h>
 
+#include <cublas.h>
 #include <mkl_spblas.h>
 #include <mkl_service.h>
 
@@ -20,16 +21,38 @@
 #include <memory>
 #include <map>
 
+
 namespace fvmpor {
+
+template <typename T>
+struct CoordTraits_{
+    static bool is_device() {return false;};
+};
+template <>
+struct CoordTraits_<lin::gpu::Coordinator<int> >{
+    static bool is_device() {return true;};
+};
 
 enum SpatialWeightType {weightUpwind, weightAveraging, weightVanLeer};
 
-using util::IntVector;
+using lin::all;
 
-template <typename TVec>
+template <typename CoordHost, typename CoordDevice>
 class DensityDrivenPhysicsImpl{
-    typedef util::InterpolationMatrix InterpolationMatrix;
-    typedef util::DimVector<TVec> DimVector;
+public:
+    typedef typename lin::rebind<CoordHost, double>::type CoordHostDouble;
+    typedef typename lin::rebind<CoordHost, int>::type CoordHostInt;
+    typedef typename lin::rebind<CoordDevice, double>::type CoordDeviceDouble;
+    typedef typename lin::rebind<CoordDevice, int>::type CoordDeviceInt;
+
+    typedef lin::Vector<double, CoordHostDouble> TVec;
+    typedef lin::Vector<int, CoordHostInt> TIndexVec;
+    typedef lin::Vector<double, CoordDeviceDouble> TVecDevice;
+    typedef lin::Vector<int, CoordDeviceInt> TIndexVecDevice;
+
+    typedef util::InterpolationMatrix<CoordDevice> InterpolationMatrix;
+    typedef util::DimVector<TVecDevice> DimVector;
+
 protected:
     typedef mesh::Point Point;
 
@@ -70,45 +93,48 @@ protected:
     std::map<int,BoundaryCondition> boundary_conditions_h_;
     std::map<int,BoundaryCondition> boundary_conditions_c_;
     Constants constants_;
-    // stores the physical tags for cv faces
-    IntVector cvface_tags;
     // tags whether a node is dirichlet
-    std::vector<int> is_dirichlet_h_vec_;
-    std::vector<int> is_dirichlet_c_vec_;
+    TIndexVec is_dirichlet_h_vec_;
+    TIndexVec is_dirichlet_c_vec_;
+    TIndexVecDevice dirichlet_h_nodes_; // DEVICE
+    TIndexVecDevice dirichlet_c_nodes_; // DEVICE
+    TVecDevice dirichlet_h_; // DEVICE
+    TVecDevice dirichlet_c_; // DEVICE
+
+    TVecDevice cvface_areas_; // DEVICE
 
     // spatial weighting
-    SpatialWeightType spatial_weighting;
-    IntVector CV_up;
-    TVec CV_flux;
     int CV_flux_comm_tag;
-    IntVector edge_up;
-    IntVector edge_2up;
-    IntVector edge_down;
-    TVec edge_flux;
+    SpatialWeightType spatial_weighting;
+
+    TIndexVecDevice CV_up; // DEVICE
+    TVecDevice CV_flux; // DEVICE
+    TIndexVecDevice edge_up; // DEVICE
+    TIndexVecDevice edge_down; // DEVICE
+    TVecDevice edge_flux; // DEVICE
 
     // derived quantities
-    std::vector<TVec> head_scv;
-    std::vector<TVec> c_scv;
-    std::vector<TVec> phi_scv;
-    std::vector<TVec> theta_scv;
-    std::vector<IntVector> index_scv;
-    std::vector<TVec> weight_scv;
+    std::vector<TVecDevice> head_scv;
+    std::vector<TVecDevice> c_scv;
+    std::vector<TVecDevice> phi_scv;
+    std::vector<TIndexVecDevice> index_scv;
+    std::vector<TVecDevice> weight_scv;
     std::map<int, int> zones_map_;
 
     // spatial weighting for CV faces
-    std::vector<IntVector> n_front_;
-    std::vector<IntVector> n_back_;
-    std::vector<IntVector> p_front_;
-    std::vector<IntVector> q_front_;
-    std::vector<IntVector> p_back_;
-    std::vector<IntVector> q_back_;
-    TVec edge_weight_front_;
-    TVec edge_weight_back_;
-    IntVector edge_node_front_;
-    IntVector edge_node_back_;
+    std::vector<TIndexVecDevice> n_front_;
+    std::vector<TIndexVecDevice> n_back_;
+    std::vector<TIndexVecDevice> p_front_;
+    std::vector<TIndexVecDevice> q_front_;
+    std::vector<TIndexVecDevice> p_back_;
+    std::vector<TIndexVecDevice> q_back_;
+    TVecDevice edge_weight_front_;
+    TVecDevice edge_weight_back_;
+    TIndexVecDevice edge_node_front_;
+    TIndexVecDevice edge_node_back_;
 
-    TVec M_flux_faces_;
-    TVec C_flux_faces_;
+    TVecDevice M_flux_faces_;
+    TVecDevice C_flux_faces_;
 
     // for interpolation from nodes to CV faces
     InterpolationMatrix shape_matrix;
@@ -116,39 +142,49 @@ protected:
     InterpolationMatrix shape_gradient_matrixY;
     InterpolationMatrix shape_gradient_matrixZ;
     InterpolationMatrix flux_lim_matrix;
+    InterpolationMatrix cvflux_matrix;
+    InterpolationMatrix dirichlet_matrix;
 
-    TVec h_vec_, c_vec_; // head and concentration at the nodes
+    TVecDevice h_vec_, c_vec_; // head and concentration at the nodes
+    TVecDevice cp_vec_; // concentration derivative at the nodes
     DimVector grad_h_faces_; // head gradient at CV faces
     DimVector grad_c_faces_; // head gradient at CV faces
-    TVec h_faces_; // head at CV faces
-    TVec c_faces_; // head at CV faces
-    TVec qdotn_faces_; // volumetric fluid flux at CV faces
-    TVec qcdotn_faces_; // volumetric solute flux at CV faces
+    TVecDevice h_faces_, c_faces_; // head and concentration at CV faces
+    TVecDevice qdotn_faces_; // volumetric fluid flux at CV faces
+    TVecDevice qcdotn_faces_; // volumetric solute flux at CV faces
 
     // storing derived quantities averaged for each control volume
-    TVec rho_vec_, phi_vec_;
+    TVecDevice rho_vec_, phi_vec_;
     // storing derived quantities at cv faces (using c and h values at faces)
-    TVec rho_faces_, phi_faces_;
+    TVecDevice rho_faces_, phi_faces_;
     // storing upwinded/flux limitted values at cv faces
     TVec rho_faces_lim_, c_faces_lim_;
     // storing coefficients for derivative terms
     // these are constants
-    TVec ahc_vec_;
+    TVecDevice ahc_vec_;
     double ahh_, ach_, acc_;
     // storing values at faces
     DimVector K_faces_;
-    TVec Dm_faces_;
+    TVecDevice Dm_faces_;
     DimVector norm_faces_;
     DimVector qsat_faces_;
 };
 
-template <typename value_type, typename TVec>
-class DensityDrivenPhysics : public fvm::PhysicsBase<DensityDrivenPhysics<value_type, TVec>, value_type>, public DensityDrivenPhysicsImpl<TVec> {
+
+template <typename value_type, typename CoordHost, typename CoordDevice>
+class DensityDrivenPhysics :
+    public fvm::PhysicsBase< DensityDrivenPhysics<value_type, CoordHost, CoordDevice>,
+                             value_type>,
+    public DensityDrivenPhysicsImpl<CoordHost,CoordDevice>
+{
     typedef fvm::PhysicsBase<DensityDrivenPhysics, value_type> base;
-    //typedef DensityDrivenPhysicsImpl<TVec> impl;
+    typedef DensityDrivenPhysicsImpl<CoordHost,CoordDevice> impl;
 
     int num_calls;
     friend class Preconditioner;
+
+    typename impl::TVecDevice res_tmp;
+    typename impl::TVec res_tmp_host;
 public:
 
     typedef typename base::iterator iterator;
@@ -173,8 +209,8 @@ public:
     void initialise(double& t, const mesh::Mesh& m, iterator u, iterator udash, iterator temp, Callback);
     void preprocess_evaluation(double t, const mesh::Mesh& m, const_iterator u, const_iterator udash);
     void preprocess_timestep(double t, const mesh::Mesh& m, const_iterator sol, const_iterator deriv);
-    value_type lhs(double t, const mesh::Volume& volume, const_iterator u, const_iterator udash) const;
-    value_type dirichlet(double t, const mesh::Node& n) const;
+    void residual_evaluation( double t, const mesh::Mesh& m,
+                              const_iterator sol, const_iterator deriv, iterator res);
 };
 
 /**************************************************************************
@@ -201,11 +237,15 @@ public:
         rho += constants.rho_0();
     }
 
-    template <typename TVec>
-    void DensityDrivenPhysicsImpl<TVec>::initialise_vectors( const mesh::Mesh &m ){
+    template <typename CoordHost, typename CoordDevice>
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::initialise_vectors( const mesh::Mesh &m ){
         dimension = m.dim();
 
         node_comm_.set_pattern( "NP_double", m.node_pattern() );
+
+        if(CoordTraits_<CoordDeviceInt>::is_device()){
+            assert( cublasInit() == CUBLAS_STATUS_SUCCESS );
+        }
 
         // set physical properties
         set_constants();
@@ -214,41 +254,38 @@ public:
 
         // initialise space for storing p-s-k values
         int N = m.nodes();
-        rho_vec_.resize(N);
-        phi_vec_.resize(N);
+        rho_vec_ = TVecDevice(N);
+        phi_vec_ = TVecDevice(N);
 
-        rho_faces_lim_.resize(m.interior_cvfaces());
-        c_faces_lim_.resize(m.interior_cvfaces());
-        rho_faces_.resize(m.interior_cvfaces());
-        phi_faces_.resize(m.interior_cvfaces());
+        rho_faces_lim_ = TVecDevice(m.interior_cvfaces());
+        c_faces_lim_ = TVecDevice(m.interior_cvfaces());
+        rho_faces_ = TVecDevice(m.interior_cvfaces());
+        phi_faces_ = TVecDevice(m.interior_cvfaces());
 
         // spatial weightings
-        CV_up.resize(m.local_nodes());
-        CV_flux.resize(m.nodes()); 
+        CV_up = TIndexVecDevice(m.local_nodes());
+        CV_flux = TVecDevice(m.nodes());
         CV_flux_comm_tag = node_comm_.vec_add(CV_flux.data());
 
-        edge_up.resize(m.edges());
-        edge_down.resize(m.edges());
-        edge_flux.resize(m.edges());
+        edge_up = TIndexVecDevice(m.edges());
+        edge_down = TIndexVecDevice(m.edges());
+        edge_flux = TVecDevice(m.edges());
 
-        M_flux_faces_.resize(m.cvfaces());
-        C_flux_faces_.resize(m.cvfaces());
-        qdotn_faces_.resize(m.cvfaces());
-        qcdotn_faces_.resize(m.cvfaces());
+        M_flux_faces_ = TVecDevice(m.cvfaces());
+        C_flux_faces_ = TVecDevice(m.cvfaces());
+        qdotn_faces_ = TVecDevice(m.cvfaces());
+        qcdotn_faces_ = TVecDevice(m.cvfaces());
 
         // initialise space for derivative coefficients
-        int NL = m.local_nodes();
-        ahc_vec_.resize(NL);
-
-        cvface_tags.resize( m.interior_cvfaces() );
-        for( int i=0; i<m.interior_cvfaces(); i++ )
-            cvface_tags[i] = m.cvface(i).element().physical_tag();
+        ahc_vec_ = TVecDevice(m.local_nodes());
 
         // tag dirichlet nodes
         // also tag nodes that lie on seepage faces
         // assumes that if there is more than one seepage face, they all have the same tag
-        is_dirichlet_h_vec_.resize(m.local_nodes());
-        is_dirichlet_c_vec_.resize(m.local_nodes());
+        is_dirichlet_h_vec_ = TIndexVec(m.local_nodes());
+        is_dirichlet_c_vec_ = TIndexVec(m.local_nodes());
+        int num_dirichlet_h = 0;
+        int num_dirichlet_c = 0;
         for( int i=0; i<m.local_nodes(); i++ ){
             const mesh::Node& n = m.node(i);
             // look for dirichlet tags attached to the node
@@ -256,12 +293,63 @@ public:
                 int tag = n.boundary(j);
                 if( boundary_condition_h(tag).is_dirichlet() ){
                     is_dirichlet_h_vec_[i] = tag;
+                    num_dirichlet_h++;
                 }
                 if( boundary_condition_c(tag).is_dirichlet() ){
                     is_dirichlet_c_vec_[i] = tag;
+                    num_dirichlet_c++;
                 }
             }
         }
+
+        // make a list of the dirichlet nodes
+        TIndexVec dirichlet_h_nodes(num_dirichlet_h);
+        TIndexVec dirichlet_c_nodes(num_dirichlet_c);
+        int count_h=0;
+        int count_c=0;
+        for(int i=0; i<m.local_nodes(); i++){
+            if(is_dirichlet_h_vec_[i])
+                dirichlet_h_nodes[count_h++] = i;
+            if(is_dirichlet_c_vec_[i])
+                dirichlet_c_nodes[count_c++] = i;
+        }
+        // copy to device
+        dirichlet_h_nodes_ = dirichlet_h_nodes;
+        dirichlet_c_nodes_ = dirichlet_c_nodes;
+
+        // store the prescribed head values
+        // currently this only works for time-invariant dirichlet values
+        TVec dirichlet_h(num_dirichlet_h);
+        for(int n=0; n<num_dirichlet_h; n++){
+            double t=0.;
+            int i = dirichlet_h_nodes[n];
+            const BoundaryCondition& bc = boundary_condition_h(is_dirichlet_h_vec_[i]);
+            // fixed dirichlet
+            if( bc.type()==1 ){
+                dirichlet_h[n] = bc.value(t);
+            }
+            else{
+                double el = dimension == 2 ? m.node(i).point().y : m.node(i).point().z;
+                if(bc.type()==4)
+                    dirichlet_h[n] = bc.hydrostatic(t, el);
+                else
+                    assert(false);
+                //else
+                //    dirichlet_h[n] = bc.hydrostatic_shore(t, el);
+            }
+        }
+        TVec dirichlet_c(num_dirichlet_c);
+        for(int n=0; n<num_dirichlet_c; n++){
+            double t=0.;
+            int i = dirichlet_c_nodes[n];
+            const BoundaryCondition& bc = boundary_condition_c(is_dirichlet_c_vec_[i]);
+            // only fixed dirichlet value possible for concentration
+            assert(bc.type()==1);
+            dirichlet_c[n] = bc.value(t);
+        }
+        // copy to device
+        dirichlet_h_ = dirichlet_h;
+        dirichlet_c_ = dirichlet_c;
 
         // initialise vectors used in calculating derived quantities such as saturation
         // allocate room for each of the arrays
@@ -273,21 +361,14 @@ public:
         for( std::set<int>::iterator it=zones.begin(); it!=zones.end(); it++)
             zones_map_[*it] = indx++;
 
-        /**************************************
-         * IDEA : we could just recompute phi
-         * for each CV, because it is invariant
-        **************************************/
-
-        head_scv.resize( num_zones );
-        weight_scv.resize( num_zones );
-        index_scv.resize( num_zones );
-        phi_scv.resize( num_zones );
-
         // temp var
+        std::vector< std::vector<double> > weight_scv_tmp;
+        std::vector< std::vector<int> > index_scv_tmp;
+        weight_scv_tmp.resize( num_zones );
+        index_scv_tmp.resize( num_zones );
         std::vector<std::map<int,int> > nodes_idx;
         nodes_idx.resize(num_zones);
         // compile index and weight information mapping node information to scv information
-        //for(int i=0; i<m.local_nodes(); i++){
         for(int i=0; i<m.nodes(); i++){
             const mesh::Volume& cv = m.volume(i);
             double cv_vol = cv.vol();
@@ -302,16 +383,30 @@ public:
             }
             for(int j=0; j<num_zones; j++){
                 if(counts[j]){
-                    weight_scv[j].push_back(weights[j]);
-                    index_scv[j].push_back(i);
-                    nodes_idx[j][i] = index_scv[j].size()-1;
+                    weight_scv_tmp[j].push_back(weights[j]);
+                    index_scv_tmp[j].push_back(i);
+                    nodes_idx[j][i] = index_scv_tmp[j].size()-1;
                 }
             }
         }
-        // allocate room for head values mapped onto SCVs
+        // copy index and weight information to the device
+        weight_scv.resize( num_zones );
+        index_scv.resize( num_zones );
         for(int i=0; i<num_zones; i++){
-            head_scv[i].resize( index_scv[i].size() );
-            phi_scv[i].resize( index_scv[i].size() );
+            // temporary host vectors
+            TVec w_tmp(weight_scv_tmp[i].begin(), weight_scv_tmp[i].end());
+            TIndexVec i_tmp(index_scv_tmp[i].begin(), index_scv_tmp[i].end());
+            // fast copy to device
+            weight_scv[i] = w_tmp;
+            index_scv[i] = i_tmp;
+        }
+
+        // allocate room for head values mapped onto SCVs
+        head_scv.resize( num_zones );
+        phi_scv.resize( num_zones );
+        for(int i=0; i<num_zones; i++){
+            head_scv[i] = TVecDevice( index_scv[i].size() );
+            phi_scv[i] = TVecDevice( index_scv[i].size() );
         }
 
         // this will hold global (face, edge) pairs of each mapped node value in each zone
@@ -327,9 +422,13 @@ public:
                 int f = edge_cvfaces[j];
                 int z = zones_map_[m.cvface(f).element().physical_tag()];
                 int n = nodes_idx[z][fid];
-                faceEdge_map_front[z].insert(std::pair<int, std::pair<int, int> >( n, std::pair<int, int>(f, i) ));
+                faceEdge_map_front[z].insert(
+                        std::pair<int, std::pair<int, int> >( n, std::pair<int, int>(f, i) )
+                );
                 n = nodes_idx[z][bid];
-                faceEdge_map_back[z].insert(std::pair<int, std::pair<int, int> >( n, std::pair<int, int>(f, i)));
+                faceEdge_map_back[z].insert(
+                        std::pair<int, std::pair<int, int> >( n, std::pair<int, int>(f, i))
+                );
             }
         }
 
@@ -342,136 +441,194 @@ public:
         q_back_.resize(num_zones);
         typedef std::multimap<int, std::pair<int, int> >::iterator idxTypeIt;
         for(int z=0; z<num_zones; z++){
-            int len = head_scv[z].size();
+            std::vector<int> n_front;
+            std::vector<int> p_front;
+            std::vector<int> q_front;
+            std::vector<int> n_back;
+            std::vector<int> p_back;
+            std::vector<int> q_back;
+            int len = head_scv[z].dim();
             for(int i=0; i<len; i++){
                 std::pair<idxTypeIt, idxTypeIt> rng = faceEdge_map_front[z].equal_range(i);
                 for( idxTypeIt it=rng.first; it!=rng.second; ++it ){
-                    n_front_[z].push_back(i); // local node id
-                    q_front_[z].push_back(it->second.first); // global face index
-                    p_front_[z].push_back(it->second.second); // global edge index
+                    n_front.push_back(i); // local node id
+                    q_front.push_back(it->second.first); // global face index
+                    p_front.push_back(it->second.second); // global edge index
                 }
                 rng = faceEdge_map_back[z].equal_range(i);
                 for( idxTypeIt it=rng.first; it!=rng.second; ++it ){
-                    n_back_[z].push_back(i); // local node id
-                    q_back_[z].push_back(it->second.first); // global face index
-                    p_back_[z].push_back(it->second.second); // global edge index
+                    n_back.push_back(i); // local node id
+                    q_back.push_back(it->second.first); // global face index
+                    p_back.push_back(it->second.second); // global edge index
                 }
             }
+            n_front_[z] = TIndexVec(n_front.begin(), n_front.end());
+            p_front_[z] = TIndexVec(p_front.begin(), p_front.end());
+            q_front_[z] = TIndexVec(q_front.begin(), q_front.end());
+            n_back_[z] = TIndexVec(n_back.begin(), n_back.end());
+            p_back_[z] = TIndexVec(p_back.begin(), p_back.end());
+            q_back_[z] = TIndexVec(q_back.begin(), q_back.end());
         }
 
-        edge_weight_front_.resize(m.edges());
-        edge_weight_back_.resize(m.edges());
-        edge_weight_back_ = 0.5;
-        edge_weight_front_ = 0.5;
-        edge_node_front_.resize(m.edges());
-        edge_node_back_.resize(m.edges());
+        edge_weight_front_ = TVecDevice(m.edges(), 0.5);
+        edge_weight_back_ = TVecDevice(m.edges(), 0.5);
+        TIndexVec edge_node_front(m.edges());
+        TIndexVec edge_node_back(m.edges());
         for( int i=0; i<m.edges(); i++){
-            edge_node_front_[i] = m.edge(i).front().id();
-            edge_node_back_[i] = m.edge(i).back().id();
+            edge_node_front[i] = m.edge(i).front().id();
+            edge_node_back[i] = m.edge(i).back().id();
         }
+        // copy onto device
+        edge_node_front_ = edge_node_front;
+        edge_node_back_  = edge_node_back;
 
         // initialise the shape functions
         initialise_shape_functions(m);
+
+        // create flat arrays with cv face areas
+        TVec cvface_areas(m.cvfaces());
+        for(int i=0; i<m.cvfaces(); i++)
+            cvface_areas[i] = m.cvface(i).area();
+        cvface_areas_ = cvface_areas;
 
         // initialise flux vecs
         qsat_faces_.set(m.interior_cvfaces(), m.dim());
 
         norm_faces_.set(m.interior_cvfaces(), m.dim());
+        TVec X(m.interior_cvfaces());
+        TVec Y(m.interior_cvfaces());
+        TVec Z(m.interior_cvfaces());
         for( int i=0; i<m.interior_cvfaces(); i++ ){
             Point nrm = m.cvface(i).normal();
-            norm_faces_.x()[i] = nrm.x;
-            norm_faces_.y()[i] = nrm.y;
+            X[i] = nrm.x/cvface_areas[i];
+            Y[i] = nrm.y/cvface_areas[i];
             if( m.dim()==3 )
-                norm_faces_.z()[i] = nrm.z;
+                Z[i] = nrm.z/cvface_areas[i];
         }
+        norm_faces_.x() = X;
+        norm_faces_.y() = Y;
+        if(m.dim()==3)
+            norm_faces_.z() = Z;
 
         K_faces_.set(m.interior_cvfaces(), m.dim());
         for( int i=0; i<m.interior_cvfaces(); i++ ){
             int tag = m.cvface(i).element().physical_tag();
-            K_faces_.x()[i] = physical_zone(tag).K_xx;
-            K_faces_.y()[i] = physical_zone(tag).K_yy;
+            X[i] = -physical_zone(tag).K_xx;
+            Y[i] = -physical_zone(tag).K_yy;
             if( m.dim()==3 )
-                K_faces_.z()[i] = physical_zone(tag).K_zz;
+                Z[i] = -physical_zone(tag).K_zz;
         }
+        K_faces_.x() = X;
+        K_faces_.y() = Y;
+        if(m.dim()==3)
+            K_faces_.z() = Z;
 
-        Dm_faces_.resize(m.interior_cvfaces());
+        TVec Dm_faces(m.interior_cvfaces());
         for( int i=0; i<m.interior_cvfaces(); i++ ){
             int tag = m.cvface(i).element().physical_tag();
-            Dm_faces_[i] = physical_zone(tag).Dm;
+            Dm_faces[i] = physical_zone(tag).Dm;
         }
+        Dm_faces_ = Dm_faces;
     }
 
-    template <typename TVec>
-    void DensityDrivenPhysicsImpl<TVec>::process_faces_shape( const mesh::Mesh &m )
+    template <typename CoordHost, typename CoordDevice>
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::process_faces_shape( const mesh::Mesh &m )
     {
         density(h_faces_, c_faces_, rho_faces_, constants());
     }
 
-    template <typename TVec>
-    void DensityDrivenPhysicsImpl<TVec>::process_faces_lim( const mesh::Mesh &m )
+    template <typename CoordHost, typename CoordDevice>
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::process_faces_lim( const mesh::Mesh &m )
     {
-        for( int e=0; e<m.edges(); e++ ){
-            double rho_edge = rho_vec_[edge_node_back_[e]]*edge_weight_back_[e] + rho_vec_[edge_node_front_[e]]*edge_weight_front_[e];
-            double c_edge   = c_vec_[edge_node_back_[e]]*edge_weight_back_[e]   + c_vec_[edge_node_front_[e]]*edge_weight_front_[e];
-
-            const std::vector<int>& edge_cvfaces = m.edge_cvface(e);
-            for(int j=0; j<edge_cvfaces.size(); j++){
-                int face = edge_cvfaces[j];
-                rho_faces_lim_[ face ] = rho_edge;
-                c_faces_lim_[ face ] = c_edge;
+        if(CoordTraits_<CoordDeviceInt>::is_device()){
+            lin::gpu::collect_edges(
+                          rho_vec_.data(), rho_faces_lim_.data(), m.edges(),
+                          edge_weight_front_.data(), edge_weight_back_.data(),
+                          edge_node_front_.data(), edge_node_back_.data(),
+                          flux_lim_matrix.row_ptrs().data(), flux_lim_matrix.col_indexes().data() );
+            lin::gpu::collect_edges(
+                          c_vec_.data(), c_faces_lim_.data(), m.edges(),
+                          edge_weight_front_.data(), edge_weight_back_.data(),
+                          edge_node_front_.data(), edge_node_back_.data(),
+                          flux_lim_matrix.row_ptrs().data(), flux_lim_matrix.col_indexes().data() );
+        }
+        else{
+            const int *ia = flux_lim_matrix.row_ptrs().data();
+            const int *ja = flux_lim_matrix.col_indexes().data();
+            double *rho_face_ptr = rho_faces_lim_.data();
+            double *c_face_ptr = c_faces_lim_.data();
+            double rho_edge;
+            double c_edge;
+            int e;
+//#pragma omp parallel for schedule(static) shared(rho_face_ptr, ja, ia) private(e, rho_edge)
+            for( e=0; e<m.edges(); e++ ){
+                rho_edge =
+                    rho_vec_.at(edge_node_back_[e])*edge_weight_back_.at(e)
+                  + rho_vec_.at(edge_node_front_[e])*edge_weight_front_.at(e);
+                c_edge =
+                    c_vec_.at(edge_node_back_[e])*edge_weight_back_.at(e)
+                  + c_vec_.at(edge_node_front_[e])*edge_weight_front_.at(e);
+                for( int j=ia[e]; j<ia[e+1]; j++){
+                    rho_face_ptr[ja[j]] = rho_edge;
+                    c_face_ptr[ja[j]] = c_edge;
+                }
             }
         }
     }
 
-    template <typename TVec>
-    void DensityDrivenPhysicsImpl<TVec>::process_fluxes( double t, const mesh::Mesh &m )
+    template <typename CoordHost, typename CoordDevice>
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::process_fluxes( double t, const mesh::Mesh &m )
     {
-        // compute the vector quantity q at each internal CV face
-        qsat_faces_.x() = 0;
-        qsat_faces_.y() = 0;
-        qsat_faces_.x() = grad_h_faces_.x();
-        qsat_faces_.x() *= K_faces_.x();
-        qsat_faces_.x() *= -1.;
-        if( m.dim()==2 ){
-            qsat_faces_.y() = rho_faces_;
-            qsat_faces_.y() /= constants().rho_0();
-            qsat_faces_.y() += grad_h_faces_.y();
-        }else{
-            qsat_faces_.z() = 0;
-            qsat_faces_.y() = grad_h_faces_.y();
+       // initialise the flux to zero
+        qdotn_faces_.zero();
+        qcdotn_faces_.zero();
 
-            qsat_faces_.z() = rho_faces_;
-            qsat_faces_.z() /= constants().rho_0();
-            qsat_faces_.z() += grad_h_faces_.z();
+        double factor = 1./constants().rho_0();
+        // compute the vector quantity q at each internal CV face
+        qsat_faces_.x().at(all) = grad_h_faces_.x();
+        qsat_faces_.x() *= K_faces_.x();
+        qsat_faces_.y().at(all) = grad_h_faces_.y();
+        if( m.dim()==2 ){
+            for(int i=0; i<qsat_faces_.y().dim(); i++)
+                qsat_faces_.y()[i] += factor*rho_faces_[i];
+        }else{
+            qsat_faces_.z().at(all) = grad_h_faces_.z();
+            qsat_faces_.z() += 1.;
             qsat_faces_.z() *= K_faces_.z();
-            qsat_faces_.z() *= -1.;
         }
         qsat_faces_.y() *= K_faces_.y();
-        qsat_faces_.y() *= -1.;
-        qsat_faces_.dot(norm_faces_, qdotn_faces_);
-        /*
-        for(int i=0; i<qsat_faces_.y().size(); i++)
-            if( fabs(qdotn_faces_[i])>1e-16 )
-                std::cout << m.cvface(i).centroid() << qdotn_faces_[i] << std::endl;
-        exit(1);
-        */
+
+        int ifaces = m.interior_cvfaces();
+        qdotn_faces_.at(0,ifaces-1) = mul(norm_faces_.x(), qsat_faces_.x());
+        qdotn_faces_.at(0,ifaces-1) += mul(norm_faces_.y(), qsat_faces_.y());
+        if( m.dim()==3 ){
+            qdotn_faces_.at(0,ifaces-1) += mul(norm_faces_.z(), qsat_faces_.z());
+        }
 
         // find salt flux at faces
-        grad_c_faces_.dot(norm_faces_, qcdotn_faces_);
-        qcdotn_faces_ *= Dm_faces_;
-        qcdotn_faces_ *= phi_faces_;
+        qcdotn_faces_.at(0,ifaces-1) = mul(norm_faces_.x(), grad_c_faces_.x());
+        qcdotn_faces_.at(0,ifaces-1) += mul(norm_faces_.y(), grad_c_faces_.y());
+        if( m.dim()==3 ){
+            qdotn_faces_.at(0,ifaces-1) += mul(norm_faces_.z(), grad_c_faces_.z());
+        }
+
+        qcdotn_faces_.at(0,ifaces-1) *= Dm_faces_;
+        qcdotn_faces_.at(all) *= 0.35;
+        //qcdotn_faces_.at(0,ifaces-1) *= phi_faces_; // need to find phi at faces
 
         // find the velocity at each CV face
         // these can be written as one operation when subranges are allowed
-        for( int i=0; i<m.interior_cvfaces(); i++ ){
-            M_flux_faces_[i] = rho_faces_lim_[i] * qdotn_faces_[i];
-            C_flux_faces_[i] = c_faces_lim_[i] * qdotn_faces_[i] + qcdotn_faces_[i];
-        }
+        M_flux_faces_.at(0,ifaces-1) = mul(rho_faces_lim_, qdotn_faces_.at(0,ifaces-1));
+        C_flux_faces_.at(0,ifaces-1) = mul(c_faces_lim_, qdotn_faces_.at(0,ifaces-1));
+        C_flux_faces_.at(0,ifaces-1) -= qcdotn_faces_.at(0,ifaces-1);
 
         // loop over boundary faces and find fluid flux where explicitly given by BCs
-        for( int i=m.interior_cvfaces(); i<m.cvfaces(); i++)
+        int faces_bnd = m.cvfaces()-m.interior_cvfaces();
+        TVec qdotn_faces_bnd(faces_bnd); // temp host vector for computing the boundary fluxes
+        TVec qcdotn_faces_bnd(faces_bnd); // temp host vector for computing the boundary fluxes
+        for( int i=0; i<faces_bnd; i++)
         {
-            const mesh::CVFace& cvf = m.cvface(i);
+            const mesh::CVFace& cvf = m.cvface(i+m.interior_cvfaces());
 
             int boundary_tag = cvf.boundary();
             const BoundaryCondition& BCh = boundary_condition_h( boundary_tag );
@@ -480,11 +637,13 @@ public:
             switch( BCh.type() ){
                 // prescribed flux
                 case 3:
-                    qdotn_faces_[i] = BCh.value(t) * cvf.area();
+                    //qdotn_faces_bnd[i] = BCh.value(t) * cvf.area();
+                    qdotn_faces_bnd[i] = BCh.value(t);
                     break;
                 // prescribed directional flux
                 case 6:
-                    qdotn_faces_[i] = BCh.flux( t, cvf.normal() ) * cvf.area();
+                    //qdotn_faces_bnd[i] = BCh.flux( t, cvf.normal() );
+                    qdotn_faces_bnd[i] = BCh.flux( t, cvf.normal() )/cvface_areas_[i];
                     break;
                 default:
                     break;
@@ -493,16 +652,21 @@ public:
             switch( BCc.type() ){
                 // prescribed flux
                 case 3:
-                    qcdotn_faces_[i] = BCc.value(t) * cvf.area();
+                    //qcdotn_faces_bnd[i] = BCc.value(t) * cvf.area();
+                    qcdotn_faces_bnd[i] = BCc.value(t);
                     break;
                 // prescribed directional flux
                 case 6:
-                    qcdotn_faces_[i] = BCc.flux( t, cvf.normal() ) * cvf.area();
+                    //qcdotn_faces_bnd[i] = BCc.flux( t, cvf.normal() );
+                    // we have to scale here because the cvf.normal() is scaled by cvface area
+                    qcdotn_faces_bnd[i] = BCc.flux( t, cvf.normal() )/cvface_areas_[i];
                     break;
                 default:
                     break;
             }
         }
+        qdotn_faces_.at(ifaces,m.cvfaces()-1) = qdotn_faces_bnd;
+        qcdotn_faces_.at(ifaces,m.cvfaces()-1) = qcdotn_faces_bnd;
 
         for( int i=m.interior_cvfaces(); i<m.cvfaces(); i++)
         {
@@ -511,7 +675,8 @@ public:
             int boundary_tag = cvf.boundary();
             const BoundaryCondition& BCh = boundary_condition_h( boundary_tag );
 
-            if( is_dirichlet_h_vec_[cvf.back().id()] )
+            //if( is_dirichlet_h_vec_[cvf.back().id()] ) // THIS IS BAD! non-dirichlet faces can have dirichlet back nodes
+            if( BCh.is_dirichlet() )
             {
                 // in the case of a dirichlet boundary condition on pressure head we calculate the
                 // flux over the control volume face by asserting conservation of mass
@@ -524,16 +689,18 @@ public:
                     for (int j = 0; j < scv.cvfaces(); ++j) {
                         const mesh::CVFace& subcvf = scv.cvface(j);
                         if( subcvf.id()<m.interior_cvfaces() || !boundary_condition_h(subcvf.boundary()).is_dirichlet() ){
-                            int sign = subcvf.back().id() == v.id() ? 1 : -1;
-                            total_flux += sign * qdotn_faces_[subcvf.id()];
+                            //int sign = subcvf.back().id() == v.id() ? 1 : -1;
+                            int sign = subcvf.back().id() == cvf.back().id() ? 1 : -1;
+                            //total_flux += sign * qdotn_faces_[subcvf.id()];
+                            total_flux += sign * qdotn_faces_[subcvf.id()] * cvface_areas_[i];
                         } else{
-                            total_area += subcvf.area();
+                            //total_area += subcvf.area();
+                            total_area += cvface_areas_[i];
                         }
                     }
                 }
-                qdotn_faces_[i] = -total_flux / total_area * cvf.area();
-                //qdotn_faces_[i] = total_flux / total_area * cvf.area();
-                //std::cout << "total bflux = " << qdotn_faces_[i] << std::endl;
+                //qdotn_faces_[i] = -total_flux / total_area * cvf.area();
+                qdotn_faces_[i] = -total_flux / total_area;
             }
         }
 
@@ -554,35 +721,44 @@ public:
             // now form the flux over the face
             M_flux_faces_[i] = rho_face * qdotn_faces_[i];
             C_flux_faces_[i] = c_face * qdotn_faces_[i];
-            if(fabs(cvf.centroid().x-200)<1e-10){
-                std::cout << cvf.centroid() << " M,C flux = [" << M_flux_faces_[i] << ", " << C_flux_faces_[i] << "]" << std::endl;
-            }
+            qcdotn_faces_[i] =  c_face * qdotn_faces_[i];
         }
+
+        M_flux_faces_ *= cvface_areas_;
+        C_flux_faces_ *= cvface_areas_;
     }
 
-    template <typename TVec>
-    void DensityDrivenPhysicsImpl<TVec>::process_spatial_weights(const mesh::Mesh& m){
+    template <typename CoordHost, typename CoordDevice>
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::process_spatial_weights(const mesh::Mesh& m){
 
         // determine the flux over each edge
-        flux_lim_matrix.matvec( qdotn_faces_, edge_flux );
+        flux_lim_matrix.matvec( qdotn_faces_.at(0, m.interior_cvfaces()-1), edge_flux );
 
         switch( spatial_weighting ){
+            case weightAveraging :
+                assert(false);
+                break;
             ////////////////////////////////////////////////////////
             // the upwinding case is simple
             ////////////////////////////////////////////////////////
-            case weightUpwind : 
-                for(int i=0; i<m.edges(); i++){
-                    if( edge_flux[i]<0. ){
-                        edge_weight_back_[i] = 0.;
-                        edge_weight_front_[i] = 1.;
-                        edge_up[i] = m.edge(i).front().id();
-                        edge_down[i] = m.edge(i).back().id();
-                    }
-                    else{
-                        edge_weight_back_[i] = 1.;
-                        edge_weight_front_[i] = 0.;
-                        edge_up[i] = m.edge(i).back().id();
-                        edge_down[i] = m.edge(i).front().id();
+            case weightUpwind :
+                if(CoordTraits_<CoordDeviceInt>::is_device()){
+                    lin::gpu::set_weights_upwind(
+                            edge_flux.data(),
+                            edge_weight_front_.data(), edge_weight_back_.data(),
+                            m.edges()
+                    );
+                }
+                else{
+                    for(int i=0; i<m.edges(); i++){
+                        if( edge_flux.at(i)<0. ){
+                            edge_weight_front_.at(i) = 1.;
+                            edge_weight_back_.at(i) = 0.;
+                        }
+                        else{
+                            edge_weight_front_.at(i) = 0.;
+                            edge_weight_back_.at(i) = 1.;
+                        }
                     }
                 }
                 break;
@@ -590,6 +766,8 @@ public:
             // the flux limitting case takes a bit more work
             ////////////////////////////////////////////////////////
             case weightVanLeer :
+                assert(false);
+                /*
                 for(int i=0; i<m.edges(); i++){
                     if( edge_flux[i]>0. ){
                         edge_up[i] = m.edge(i).back().id();
@@ -661,16 +839,17 @@ public:
                         }
                     }
                 }
+                */
         }
     }
 
-    template <typename TVec>
-    void DensityDrivenPhysicsImpl<TVec>::process_volumes_psk( const mesh::Mesh &m )
+    template <typename CoordHost, typename CoordDevice>
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::process_volumes_psk( const mesh::Mesh &m )
     {
         double rho_0 = constants().rho_0();
 
         // zero out vectors of CV-averaged derived quantities
-        phi_vec_ = 0.;
+        phi_vec_.zero();
 
         // for each zone calucluate the scv-weighted derived quantities and add them to the appropriated CV-averaged vectors
         double T=0.;
@@ -681,38 +860,39 @@ public:
             const PhysicalZone& props = physical_zone(indx);
 
             // get head data for this zone type
-            head_scv[zone].permute_assign(h_vec_, index_scv[zone]);
+            head_scv[zone].at(all) = h_vec_.at(index_scv[zone]);
 
-            phi_scv[zone] = props.phi;
-
+            phi_scv[zone].at(all) = props.phi;
             // copy into global vector
-            phi_vec_.permute_add_weighted_inverse(phi_scv[zone], index_scv[zone], weight_scv[zone]);
+            phi_vec_.at(index_scv[zone]) += mul(phi_scv[zone], weight_scv[zone]);
         }
+
         // find the CV-averaged density - this is much simpler because density is not dependant on material properties
         // of the porous medium
         density(h_vec_, c_vec_, rho_vec_, constants());
     }
 
-    template <typename TVec>
-    void DensityDrivenPhysicsImpl<TVec>::process_derivative_coefficients( const mesh::Mesh &m )
+    template <typename CoordHost, typename CoordDevice>
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::process_derivative_coefficients( const mesh::Mesh &m )
     {
         ahh_ = 0.;
-        ahc_vec_ = phi_vec_;
-        ahc_vec_ *= constants().rho_0() * constants().eta();
+        ahc_vec_.at(all) = phi_vec_;
+        double factor = constants().rho_0() * constants().eta();
+        ahc_vec_ *= factor;
         ach_ = 0.;
         acc_ = 1.;
     }
 
-    template <typename TVec>
-    void DensityDrivenPhysicsImpl<TVec>::initialise_shape_functions(const mesh::Mesh& m)
+    template <typename CoordHost, typename CoordDevice>
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::initialise_shape_functions(const mesh::Mesh& m)
     {
         // matrices with weights for computing shape functions
-        IntVector ia, ja;
+        TIndexVec ia, ja;
         TVec shape_val, shape_dx, shape_dy, shape_dz;
 
         // Allocate row begin array
         int ia_length = m.interior_cvfaces() + 1;
-        ia.resize(ia_length);
+        ia = TIndexVec(ia_length);
 
         // Fill row begin array
         ia[0] = 0;
@@ -722,20 +902,21 @@ public:
 
         // Allocate matrix arrays
         int ja_length = ia[ia_length-1];
-        ja.resize(ja_length);
+        ja = TIndexVec(ja_length);
 
-        shape_val.resize(ja_length);
-        shape_dx.resize(ja_length);
-        shape_dy.resize(ja_length);
-        shape_dz.resize(ja_length);
+        shape_val = TVec(ja_length);
+        shape_dx = TVec(ja_length);
+        shape_dy = TVec(ja_length);
+        shape_dz = TVec(ja_length);
 
         // Allocate node value arrays
-        h_vec_.resize(m.nodes());
-        c_vec_.resize(m.nodes());
+        h_vec_ = TVec(m.nodes());
+        c_vec_ = TVec(m.nodes());
+        cp_vec_ = TVec(m.nodes());
 
         // Allocate CVFace centroid arrays
-        h_faces_.resize(m.interior_cvfaces());
-        c_faces_.resize(m.interior_cvfaces());
+        h_faces_ = TVec(m.interior_cvfaces());
+        c_faces_ = TVec(m.interior_cvfaces());
         grad_h_faces_.set(m.interior_cvfaces(), m.dim());
         grad_c_faces_.set(m.interior_cvfaces(), m.dim());
 
@@ -782,13 +963,19 @@ public:
         if (dimension == 3)
             shape_gradient_matrixZ = InterpolationMatrix(ia, ja, shape_dz);
 
-        // matrix for flux limitting
-        IntVector ia_fl, ja_fl;
+        //////////////////////////////////////////////////////////
+        // MATRIX FOR FLUX LIMITTING
+        // num_edges X num_cvfaces
+        // sums the fluxes at each face associated with an edge
+        // which gives the total flux between the control volumes
+        // that share the edge
+        //////////////////////////////////////////////////////////
+        TIndexVec ia_fl, ja_fl;
         TVec weights_fl;
 
         // allocate space for row begin indices
         ia_length = m.edges()+1;
-        ia_fl.resize(ia_length);
+        ia_fl = TIndexVec(ia_length);
         ia_fl[0] = 0;
         for (int i = 0; i < m.edges(); ++i) {
             ia_fl[i+1] = ia_fl[i] + m.edge_cvface(i).size();
@@ -796,10 +983,11 @@ public:
 
         // allocate space for column indices
         ja_length = ia_fl[ia_length-1];
-        ja_fl.resize(ja_length);
+        ja_fl = TIndexVec(ja_length);
 
         // allocate space for weights
-        weights_fl.resize(ja_length);
+        //weights_fl.resize(ja_length);
+        weights_fl = TVec(ja_length, 0.);
 
         for(int i=0; i<m.edges(); i++){
             const std::vector<int>& faces = m.edge_cvface(i);
@@ -814,18 +1002,69 @@ public:
             for(int j=0; j<faces.size(); j++){
                 int face = faces[j];
                 //weights_fl[pos] = m.cvface(face).area()/total_area;
-                weights_fl[pos] = 1./total_area;
+                weights_fl.at(pos) = 1./total_area;
                 ja_fl[pos] = face;
                 pos++;
             }
         }
 
         flux_lim_matrix = InterpolationMatrix(ia_fl, ja_fl, weights_fl);
+
+        //////////////////////////////////////////////////////////
+        // MATRIX FOR CALCULATING FLUX OVER A CV SURFACE
+        // num_nodes X num_cvfaces
+        // sums the flux over each CV face that defines the surface
+        // of the control volume around each node
+        //////////////////////////////////////////////////////////
+        TIndexVec ia_cl, ja_cl;
+        TVec weights_cl;
+
+        ia_length = m.nodes()+1;
+        ia_cl = TIndexVec(ia_length);
+        ia_cl[0] = 0;
+        TIndexVec face_counts(m.nodes(),0);
+        std::vector<int> col_indexes;
+        std::vector<double> weights_tmp;
+        for (int i = 0; i < m.nodes(); ++i) {
+            const mesh::Volume& v = m.volume(i);
+            double w = 1./v.vol();
+            std::vector<int> node_faces;
+            // make a list of the cv faces that form the
+            // surface of the control volume around node i
+            for(int j=0; j<v.scvs(); j++){
+                const mesh::SCV& s = v.scv(j);
+                for(int k=0; k<s.cvfaces(); k++)
+                    node_faces.push_back(s.cvface(k).id());
+            }
+            // sort the faces in ascending order
+            std::sort(node_faces.begin(),node_faces.end());
+            // add them to the column index
+            for(int j=0; j<node_faces.size(); j++)
+                col_indexes.push_back(node_faces[j]);
+            // update the row pointer
+            ia_cl[i+1] = ia_cl[i]+node_faces.size();
+            // choose the weight for each face
+            for(int j=0; j<node_faces.size(); j++){
+                // note that the order of evaluation is very important here
+                // because if a cv face lies on the boundary it
+                // has no front node
+                if(i==m.cvface(node_faces[j]).back().id())
+                    weights_tmp.push_back(-w);
+                else
+                    weights_tmp.push_back(w);
+            }
+        }
+        // assign the column index and weights
+        ja_cl.assign(col_indexes.begin(), col_indexes.end());
+        weights_cl.assign(weights_tmp.begin(), weights_tmp.end());
+
+        cvflux_matrix = InterpolationMatrix(ia_cl, ja_cl, weights_cl);
+        //cvflux_matrix.write_to_file("cvMat.m", util::file_format_matlab);
     }
 
     // get a copy of a set of physical zone properties
-    template <typename TVec>
-    const PhysicalZone& DensityDrivenPhysicsImpl<TVec>::physical_zone( int zone ) const
+    template <typename CoordHost, typename CoordDevice>
+    const PhysicalZone& DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::physical_zone( int zone ) const
     {
         if(!(zone>=0 && zone<physical_zones_.size()))
         assert(zone>=0 && zone<physical_zones_.size());
@@ -833,20 +1072,20 @@ public:
     }
 
     // get the number of physical zones
-    template <typename TVec>
-    int DensityDrivenPhysicsImpl<TVec>::physical_zones( void ) const
+    template <typename CoordHost, typename CoordDevice>
+    int DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::physical_zones( void ) const
     {
         return physical_zones_.size();
     }
 
-    template <typename TVec>
-    const BoundaryCondition& DensityDrivenPhysicsImpl<TVec>::boundary_condition_h( int tag ) const{
+    template <typename CoordHost, typename CoordDevice>
+    const BoundaryCondition& DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::boundary_condition_h( int tag ) const{
         std::map<int,BoundaryCondition>::const_iterator it = boundary_conditions_h_.find(tag);
         assert( it!=boundary_conditions_h_.end());
         return it->second;
     }
-    template <typename TVec>
-    const BoundaryCondition& DensityDrivenPhysicsImpl<TVec>::boundary_condition_c( int tag ) const{
+    template <typename CoordHost, typename CoordDevice>
+    const BoundaryCondition& DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::boundary_condition_c( int tag ) const{
         std::map<int,BoundaryCondition>::const_iterator it = boundary_conditions_c_.find(tag);
         assert( it!=boundary_conditions_c_.end());
         return it->second;

@@ -359,12 +359,9 @@ public:
         // library has been initialised
         // This also ensures that the device is setup correctly
         if(CoordTraits_<CoordDeviceInt>::is_device()){
-            cusparseHandle_t handle;
             fid.open("initialiseGPU.txt");
             std::cout << "intialising cublas" << std::endl;
             assert( cublasInit() == CUBLAS_STATUS_SUCCESS );
-            //std::cout << "intialising cusparse" << std::endl;
-            //assert( cusparseCreate(&handle) == CUSPARSE_STATUS_SUCCESS );
         }
         else
             fid.open("initialiseCPU.txt");
@@ -834,12 +831,12 @@ public:
         flux_lim_matrix.matvec( qdotn_faces.at(0,m.interior_cvfaces()-1), edge_flux );
 
         switch( spatial_weighting ){
-            ////////////////////////////////////////////////////////
-            // the upwinding case is simple
-            ////////////////////////////////////////////////////////
             case weightAveraging :
                 assert(false);
                 break;
+            ////////////////////////////////////////////////////////
+            // the upwinding case is simple
+            ////////////////////////////////////////////////////////
             case weightUpwind :
                 if(CoordTraits_<CoordDeviceInt>::is_device()){
                     lin::gpu::set_weights_upwind(

@@ -5,8 +5,8 @@
 namespace fvmpor{
 
     // initial conditions
-    template <typename TVec>
-    void DensityDrivenPhysicsImpl<TVec>::set_initial_conditions( double &t, const mesh::Mesh& m ){
+    template <typename CoordHost, typename CoordDevice>
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::set_initial_conditions( double &t, const mesh::Mesh& m ){
         spatial_weighting = weightUpwind;
         //spatial_weighting = weightAveraging;
         //spatial_weighting = weightVanLeer;
@@ -17,21 +17,23 @@ namespace fvmpor{
             double x = p.x;
             double el = dimension == 2 ? p.y : p.z;
 
-            if( is_dirichlet_h_vec_[i] ){
+            if( is_dirichlet_h_vec_[i] )
+            {
                 int tag = is_dirichlet_h_vec_[i];
                 if( boundary_condition_h(tag).type()==1 )
                     h_vec_[i] = boundary_condition_h(tag).value(t);
                 else
                     h_vec_[i] = boundary_condition_h(tag).hydrostatic(t,el);
             } else{
-                h_vec_[i] = 110.-el;
+                // due to head being an alegbraic variable, this value will be change
+                // when consistent initial conditions are computed
+                h_vec_[i] = 100.-el;
+                //h_vec_[i] = 0.;
             }
             if( is_dirichlet_c_vec_[i] ){
                 int tag = is_dirichlet_c_vec_[i];
-                if( boundary_condition_c(tag).type()==1 )
-                    c_vec_[i] = boundary_condition_c(tag).value(t);
-                else
-                    c_vec_[i] = boundary_condition_c(tag).hydrostatic(t,el);
+                assert( boundary_condition_c(tag).type()==1);
+                c_vec_[i] = boundary_condition_c(tag).value(t);
             } else{
                 c_vec_[i] = 0.;
             }
@@ -39,8 +41,8 @@ namespace fvmpor{
     }
 
     // set physical zones
-    template <typename TVec>
-    void DensityDrivenPhysicsImpl<TVec>::set_physical_zones( void )
+    template <typename CoordHost, typename CoordDevice>
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::set_physical_zones( void )
     {
         double rho_0 = constants().rho_0();
         double g =  constants().g();
@@ -57,27 +59,26 @@ namespace fvmpor{
     }
 
     // set constants for simulation
-    template <typename TVec>
-    void DensityDrivenPhysicsImpl<TVec>::set_constants(){
+    template <typename CoordHost, typename CoordDevice>
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::set_constants(){
         constants_ = Constants(1e-3, 0.025, 9.80665, 1000.0);
     }
 
     // boundary conditions
-    template <typename TVec>
-    void DensityDrivenPhysicsImpl<TVec>::set_boundary_conditions(){
+    template <typename CoordHost, typename CoordDevice>
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::set_boundary_conditions(){
         // no flow boundaries
         boundary_conditions_h_[1] = BoundaryCondition::PrescribedFlux(0.);
         boundary_conditions_c_[1] = BoundaryCondition::PrescribedFlux(0.);
 
         // Dirichlet on RHS boundary
-        boundary_conditions_h_[2] = BoundaryCondition::Hydrostatic(110., .025);
-        //boundary_conditions_c_[2] = BoundaryCondition::ASE(0.);
-        boundary_conditions_c_[2] = BoundaryCondition::PrescribedFlux(0.);
+        boundary_conditions_h_[2] = BoundaryCondition::Hydrostatic(100., .025);
+        boundary_conditions_c_[2] = BoundaryCondition::ASE(1.);
 
         // inflow on LHS boundary
-        //boundary_conditions_h_[3] = BoundaryCondition::PrescribedFlux(-2.39e-8);
-        boundary_conditions_h_[3] = BoundaryCondition::PrescribedFlux(0.);
-        boundary_conditions_c_[3] = BoundaryCondition::PrescribedFlux(0.);
+        boundary_conditions_h_[3] = BoundaryCondition::PrescribedFlux(-7.39e-8); // TRUE HENRY BC VALUE
+        //boundary_conditions_c_[3] = BoundaryCondition::PrescribedFlux(-2.39e-8);
+        boundary_conditions_c_[3] = BoundaryCondition::ASE(0.);
     }
 }
 

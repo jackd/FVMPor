@@ -273,20 +273,16 @@ int Preconditioner::setup(
     }
 
     /////////////////////////////////////// DEBUG ///////////////////////////////////////
-    std::ofstream fid("precon.txt"); 
+    std::ofstream fid("precon.m"); 
+    fid.precision(20);
+    fid << "D = [";
     for(int i=0; i<N; i++){
         for(int j=row_index[i]-1; j<row_index[i+1]-1; j++){
-            fid << i+1 << " " << columns[j] << " " << values[j] << std::endl;
+            fid << i+1 << " " << columns[j] << " " << values[j] << "; ";
         }
     }
-    int minCol = 1000;
-    int maxCol = 0;
-    for(int i=0; i<columns.size(); i++){
-            if(columns[i]<minCol)
-                minCol = columns[i];
-            if(columns[i]>maxCol)
-                maxCol = columns[i];
-    }
+    fid << "];" << std::endl;
+    std::cerr << "output preconditioner" << std::endl;
 
     fid.close();
     /////////////////////////////////////// DEBUG ///////////////////////////////////////

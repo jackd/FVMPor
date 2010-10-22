@@ -68,7 +68,7 @@ void print_ida_stats(void *ida_mem)
     fprintf(stdout, "lenrw   = %5ld     leniw   = %5ld\n", lenrw, leniw);
     fprintf(stdout, "lenrwLS = %5ld     leniwLS = %5ld\n", lenrwLS, leniwLS);
     fprintf(stdout, "nst     = %5ld\n"                  , nst);
-    fprintf(stdout, "nfe     = %5ld     nfeLS   = %5ld\n"  , nfe, nfeLS);
+    fprintf(stdout, "nButfe     = %5ld     nfeLS   = %5ld\n"  , nfe, nfeLS);
     fprintf(stdout, "nni     = %5ld     nli     = %5ld\n"  , nni, nli);
     fprintf(stdout, "nsetups = %5ld     netf    = %5ld\n"  , nsetups, netf);
     fprintf(stdout, "npe     = %5ld     nps     = %5ld\n"  , npe, nps);
@@ -129,12 +129,14 @@ try {
 #endif
 
 
-    double maxTimestep = 30.*60.;
+    //double maxTimestep = 30.*60.;
     //double maxTimestep = 6.*60.*60.;
-    //double maxTimestep = 0.;
+    double maxTimestep = 0.;
     int maxOrder = 3;
-    if(maxTimestep>0.)
+    if(maxTimestep>0.){
+        std::cerr << "WARNING : maximum timestep size has been set" << std::endl;
         integrator.set_max_timestep(maxTimestep);
+    }
     if(maxOrder!=5)
         integrator.set_max_order(maxOrder);
 
@@ -145,8 +147,6 @@ try {
         int N=mesh.nodes();
         variableIDs[2*i] = 1.;
         variableIDs[2*i+1] = 0.;
-        //if( physics.dirichlet(solver.time(), mesh.node(i)).c==true )
-        //    variableIDs[i*N+1] = 0.;
     }
     std::vector<hc> y0(2*mesh.local_nodes());
     std::vector<hc> yp0(2*mesh.local_nodes());
@@ -156,12 +156,30 @@ try {
     std::cerr << "finished" << std::endl;
 
     ////////////////// DEBUG ///////////////////
-    util::Solution<hc> solutionICp(mpicomm);
-    solutionICp.add( 0., &yp0[0], &yp0[2*mesh.local_nodes()]+1 );
-    solutionICp.write_timestep_VTK_XML( 0, mesh, "ICp" );
-    util::Solution<hc> solutionIC(mpicomm);
-    solutionIC.add( 0., &y0[0], &y0[2*mesh.local_nodes()]+1 );
-    solutionIC.write_timestep_VTK_XML( 0, mesh, "IC" );
+    std::ofstream fidic("ic.m");
+    fidic.precision(20);
+    fidic << "Y0 = [";
+    for(int i=0; i<mesh.local_nodes(); i++)
+        fidic << y0[i].h << "; ";
+    for(int i=0; i<mesh.local_nodes(); i++)
+        fidic << y0[i].c << "; ";
+    fidic << "];" << std::endl;
+    fidic.close();
+
+    std::ofstream fidicp("icp.m");
+    fidicp.precision(20);
+    fidicp << "YP0 = [";
+    for(int i=0; i<mesh.local_nodes(); i++)
+        fidicp << yp0[i].h << "; ";
+    for(int i=0; i<mesh.local_nodes(); i++)
+        fidicp << yp0[i].c << "; ";
+    fidicp << "];" << std::endl;
+    fidicp.close();
+    
+    std::vector<double> res(2*mesh.local_nodes());
+    std::cerr << "residual evaluation with initial conditions : ";
+    physics.residual_evaluation( 0., mesh, reinterpret_cast<const hc*>(&y0[0]), reinterpret_cast<const hc*>(&yp0[0]), reinterpret_cast<hc*>(&res[0]));
+    exit(0);
     ////////////////// DEBUG ///////////////////
 
     std::string filename;
@@ -214,6 +232,14 @@ try {
     double finalTime = MPI_Wtime() - startTime;
     if( mpicomm->rank()==0)
         std::cout << std::endl << "Simulation took : " << finalTime << " seconds" << std::endl;
+            // output step orders
+            //
+    const std::vector<int>& orders = integrator.step_orders();
+    std::cerr << "orders = [";
+    for( int i=0; i<orders.size(); i++ )
+        std::cerr << orders[i] << " ";
+    std::cerr << "];" << std::endl;
+
     if( mpicomm->size()==1)
     {
         if(false){

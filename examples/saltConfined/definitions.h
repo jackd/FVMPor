@@ -270,7 +270,7 @@ public:
         mu_(mu), eta_(eta), g_(g), rho_0_(rho_0) {
     }
     // defaults use metres, seconds, kg
-    Constants() : mu_(1e-3), eta_(4.47e-10), g_(9.80665), rho_0_(1000.0) {
+    Constants() : mu_(1e-3), eta_(0.025), g_(9.80665), rho_0_(1000.0) {
     }
     friend std::ostream& operator<<(std::ostream& os, const Constants& c){
         os << "eta = " << c.eta() << std::endl;

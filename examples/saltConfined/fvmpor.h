@@ -617,7 +617,6 @@ public:
         //qcdotn_faces_.at(0,ifaces-1) *= phi_faces_; // need to find phi at faces
 
         // find the velocity at each CV face
-        // these can be written as one operation when subranges are allowed
         M_flux_faces_.at(0,ifaces-1) = mul(rho_faces_lim_, qdotn_faces_.at(0,ifaces-1));
         C_flux_faces_.at(0,ifaces-1) = mul(c_faces_lim_, qdotn_faces_.at(0,ifaces-1));
         C_flux_faces_.at(0,ifaces-1) -= qcdotn_faces_.at(0,ifaces-1);

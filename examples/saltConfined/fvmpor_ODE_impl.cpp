@@ -137,7 +137,7 @@ namespace fvmpor {
         // collect fluxes to CVs
         res_tmp.zero();
 
-        double factor = constants().rho_0() * (1.+constants().eta());
+        double factor = constants().rho_0() * constants().eta();
 
         cvflux_matrix.matvec(M_flux_faces_, res_tmp.data()+m.local_nodes());
         cvflux_matrix.matvec(C_flux_faces_, res_tmp.data());
@@ -166,7 +166,6 @@ namespace fvmpor {
             if( fabs(res_tmp[i+N]) > 1e-10 )
                 fprintf(stderr, "%d (%7g,%7g)\t:\t%5.4g\t%5.4g\n", i, m.node(i).point().x, m.node(i).point().y, res_tmp[i+N], res_tmp[i] );
         }
-        exit(0);
         */
         ///////////////////////////////
         res_tmp.at(0,N-1) *= factor;
@@ -175,8 +174,6 @@ namespace fvmpor {
             res_tmp[i+N] -= res_tmp[i];
 
         cvflux_matrix.matvec(C_flux_faces_, res_tmp.data());
-        //for(int i=0; i<N; i++)
-        //    res_tmp[i] /= m.volume(i).vol();
         res_tmp.at(0,N-1) /= phi_vec_;
         //res_tmp.at(0,N-1) -= cp_vec_.at(0,N-1);
         for(int i=0; i<N; i++)
@@ -196,12 +193,17 @@ namespace fvmpor {
         }
 
         /////////////////////////////////////////////////////////////////////////////////////////////
-        /*
-        std::cerr << "RESIDUAL" << std::endl << "================================" << std::endl;
+        std::cerr << "writing residual to res.m" << std::endl;
+        std::ofstream fid("res.m");
+        fid.precision(20);
+        fid << "resfh = [";
         for(int i=0; i<N; i++)
-            std::cerr << i << "\t" << sol[i].c << "\t" << sol[i].h << "\t" << res[i].c << "\t" << res[i].h << std::endl;
-        std::cerr << std::endl;
-        */
+            fid << res[i].h << " ";
+        fid << "]';" << std::endl;
+        fid << "resfc = [";
+        for(int i=0; i<N; i++)
+            fid << res[i].c << " ";
+        fid << "]';" << std::endl;
         /////////////////////////////////////////////////////////////////////////////////////////////
     }
 

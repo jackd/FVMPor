@@ -438,7 +438,7 @@ void IDAIntegrator<Physics, Preconditioner>::compute_initial_conditions(iterator
     yp0_mod = N_VNew_Parallel(
         procinfo->communicator(),
         mesh().local_nodes() * variables_per_node,
-        mesh().global_nodes() * variab[phi tfin Iterations Newtons Jacobians]les_per_node);
+        mesh().global_nodes() * variables_per_node);
     assert(yp0_mod);
 
     flag = IDAGetConsistentIC(ida_mem, yy0_mod, yp0_mod);

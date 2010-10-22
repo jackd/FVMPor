@@ -54,6 +54,9 @@ all: henryDAE
 henryODE: henry.h $(IMPLEMENTATIONDEPS_ODE)
 	$(CC) $(OPTS) -DPROBLEM_HENRY $(INCLUDE) $(LIBS) -o henryODE $(IMPLEMENTATIONDEPS_ODE) $(LIB)
 
+saltODE: salt.h $(IMPLEMENTATIONDEPS_ODE)
+	$(CC) $(OPTS) -DPROBLEM_SALT $(INCLUDE) $(LIBS) -o saltODE $(IMPLEMENTATIONDEPS_ODE) $(LIB)
+
 henryDAE: henry.h $(IMPLEMENTATIONDEPS_DAE)
 	$(CC) $(OPTS) $(INCLUDE) $(LIBS) -o henryDAE $(IMPLEMENTATIONDEPS_DAE) $(LIB)
 
@@ -74,6 +77,7 @@ fvmpor_DAE.o : fvmpor_DAE.h fvmpor.h preconditioner_dss_DAE.h fvmpor_DAE.cpp
 
 fvmpor_DAE_impl.o : henry.h fvmpor_DAE.h fvmpor_DAE_impl.cpp fvmpor.h
 	$(CC) $(OPTS) -DPROBLEM_HENRY $(INCLUDE) -c fvmpor_DAE_impl.cpp
+	#$(CC) $(OPTS) -DPROBLEM_SALT $(INCLUDE) -c fvmpor_DAE_impl.cpp
 
 preconditioner_parms.o : preconditioner_parms.h preconditioner_parms.cpp
 	$(CC) $(OPTS) $(INCLUDE) -c preconditioner_parms.cpp

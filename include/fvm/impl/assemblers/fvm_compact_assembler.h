@@ -10,6 +10,7 @@
 #include <fvm/fvm.h>
 #include <fvm/mesh.h>
 #include <mpi/mpicomm.h>
+#include <util/timer.h>
 
 #include <vector>
 
@@ -63,36 +64,20 @@ template<typename Iterator>
 int FVMAssembler<Physics>::compute_residual(
     double time, const_iterator u, const_iterator up, Iterator res) {
 
+    util::Timer timer;
+    timer.tic();
+
     // Preprocess
     physics().preprocess_evaluation(time, mesh(), u, up);
 
-    // Accumulate fluxes in the residual
-    //      for each interior CV face
-    //          - add flux to front node residual
-    //          - subtract flux from back node residual
-    //      for each boundary CV face
-    //          - subtract flux from back node residual
-
-    // Volume averaged terms
-    //      for each node
-    //        - scale by 1/vol
-    //        - add source term
-    //        - subtract lhs
+    // find the residual
     physics().residual_evaluation(time, mesh(), u, up, res);
-
-    /*
-    for(int i=0; i<m.local_nodes(); i++)
-        std::cout << res[i].h << " ";
-    std::cout << std::endl;
-    for(int i=0; i<m.local_nodes(); i++)
-        std::cout << res[i].M << " ";
-    std::cout << std::endl;
-    exit(0);
-    */
 
     // Postprocess
     physics().postprocess_evaluation(time, mesh(), u, up);
 
+    double time_taken = timer.toc();
+    //std::cerr << "F evaluation took " << time_taken << " seconds" <<std::endl;
     return 0;
 }
 

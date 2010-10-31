@@ -65,13 +65,22 @@ public:
             cusparseSetMatIndexBase(descra_, CUSPARSE_INDEX_BASE_ZERO);
         }
     }
+    int rows() const{
+        return n_rows_;
+    }
+    int cols() const{
+        return n_cols_;
+    }
+    int nonzeros() const{
+        return nnz_;
+    }
     void matvec( const TVec& x, TVec& y ){
         double *x_ptr = const_cast<double*>(x.data());
         double *y_ptr = const_cast<double*>(y.data());
         int *row_ptr = const_cast<int*>(ia_.data());
         int *col_ptr = const_cast<int*>(ja_.data());
         double *v_ptr = const_cast<double*>(v_.data());
-        assert(x.dim()==n_cols_);
+        assert(x.dim()>=n_cols_);
         assert(y.dim()==n_rows_);
         // GPU : use CUSPARSE
         if( CoordTraits<CoordType>::is_device() ){
@@ -92,7 +101,7 @@ public:
         int *row_ptr = const_cast<int*>(ia_.data());
         int *col_ptr = const_cast<int*>(ja_.data());
         double *v_ptr = const_cast<double*>(v_.data());
-        assert(x.dim()==n_cols_);
+        assert(x.dim()>=n_cols_);
         assert(y_ptr!=0);
         // GPU : use CUSPARSE
         if( CoordTraits<CoordType>::is_device() ){

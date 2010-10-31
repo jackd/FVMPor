@@ -1,4 +1,5 @@
-#include "preconditioner_dss.h"
+#include "preconditioner_parms.h"
+#include "parms_wrapper.h"
 #include <fvm/solver.h>
 #include <util/streamstring.h>
 
@@ -26,9 +27,11 @@ std::set<int> direct_neighbours(const mesh::Mesh& m, int node_id)
     for (int i = 0; i < v.scvs(); ++i) {
         const mesh::Element& e = v.scv(i).element();
         for (int j = 0; j < e.nodes(); ++j) {
-            //neighbours.insert(e.node(j).id());
+            neighbours.insert(e.node(j).id());
+            /*
             if(e.node(j).id()<m.local_nodes())
                 neighbours.insert(e.node(j).id());
+            */
         }
     }
     return neighbours;
@@ -61,8 +64,8 @@ std::vector<int> dependent_columns(const mesh::Mesh& m, int node_id, int blocksi
 
 std::vector<int> sequential_vertex_colouring(const mesh::Mesh& m, int blocksize)
 {
-    //int N = m.nodes() * blocksize;
-    int N = m.local_nodes() * blocksize;
+    int N = m.nodes() * blocksize;
+    //int N = m.local_nodes() * blocksize;
 
     int max_colour = 0;
     std::vector<int> mark(N, -1);
@@ -116,17 +119,17 @@ ColumnPattern column_pattern(const mesh::Mesh& m, int blocksize)
         const mesh::Element& e = m.element(i);
         for (int j = 0; j < e.nodes(); ++j) {
             const mesh::Node& n = e.node(j);
-            if (n.id() < m.local_nodes()) {
+            //if (n.id() < m.local_nodes()) {
                 for (int k = 0; k < e.nodes(); ++k) {
                     const mesh::Node& nb = e.node(k);
-                    if (nb.id() < m.local_nodes()) {
+                    //if (nb.id() < m.local_nodes()) {
                         insert_block(matpat, n.id(), nb.id(), blocksize);
                         //////////////////////////
                         matpat_single.insert(std::make_pair(n.id(), nb.id()));
                         //////////////////////////
-                    }
+                    //}
                 }
-            }
+            //}
         }
     }
 
@@ -151,13 +154,14 @@ ColumnPattern column_pattern(const mesh::Mesh& m, int blocksize)
 void Preconditioner::initialise(const mesh::Mesh& m)
 {
     blocksize = block_traits<Physics::value_type>::blocksize;
-    N = m.local_nodes() * blocksize;
+    //N = m.local_nodes() * blocksize;
+    N = m.nodes() * blocksize;
     shift.resize(N);
 
     // Create DSS data structure
-    int opt = MKL_DSS_MSG_LVL_WARNING + MKL_DSS_TERM_LVL_ERROR;
-    int flag = dss_create(dss_handle, opt);
-    assert(flag == MKL_DSS_SUCCESS);
+    //int opt = MKL_DSS_MSG_LVL_WARNING + MKL_DSS_TERM_LVL_ERROR;
+    //int flag = dss_create(dss_handle, opt);
+    //assert(flag == MKL_DSS_SUCCESS);
 
     // Determine sparsity pattern
     pat = column_pattern(m, blocksize);
@@ -165,35 +169,34 @@ void Preconditioner::initialise(const mesh::Mesh& m)
     assert(colourvec.size() == N);
     num_colours = *std::max_element(colourvec.begin(), colourvec.end()) + 1;
 
-    // Create CSR row and column arrays
-    row_index.resize(N+1);
-    row_index[0] = 1;   // 1-based indexing
-    for (int i = 0; i < N; ++i) {
-        row_index[i+1] = row_index[i] + pat[i].size();
-        for (int j = 0; j < pat[i].size(); ++j) {
-            columns.push_back(pat[i][j] + 1);   // 1-based indexing
+    // create node list and vtxdist vector
+    nodes.reserve(m.global_nodes());
+    vtxdist = m.vtxdist();
+    ++vtxdist[0];   // one-based
+    int j = 0;
+    for (int i = 1; i < vtxdist.size(); ++i) {
+        for (; j < vtxdist[i]; ++j) {
+            nodes.push_back(j+1); // one-based
         }
+        ++vtxdist[i];   // one-based
     }
-    nnz = columns.size();
-    values.resize(nnz);
 
-    // Define DSS matrix structure
-    opt = MKL_DSS_SYMMETRIC_STRUCTURE;
-    flag = dss_define_structure(
-        dss_handle, opt, &row_index[0], N, N, &columns[0], nnz);
-    assert(flag == MKL_DSS_SUCCESS);
+    // initialise pARMS pointers
+    map = NULL;
+    matrix = NULL;
+    pc = NULL;
 
-    // Reorder DSS matrix
-    opt = MKL_DSS_AUTO_ORDER;
-    flag = dss_reorder(dss_handle, opt, 0);
-    assert(flag == MKL_DSS_SUCCESS);
+    // initialise memory for working vectors
+    temp1.resize(m.nodes());
+    temp2.resize(m.nodes());
+    temp3.resize(m.nodes());
 }
 
 int Preconditioner::setup(
     const mesh::Mesh& m, double tt, double c, double h,
     const_iterator residual, const_iterator weights,
     iterator sol, iterator derivative,
-    iterator temp1, iterator temp2, iterator temp3,
+    iterator, iterator, iterator,
     Callback compute_residual)
 {
     ++num_setups;
@@ -201,11 +204,11 @@ int Preconditioner::setup(
     if (pat.size() == 0) initialise(m);
 
     // Save original values
-    std::copy(sol, sol + m.local_nodes(), temp1);
+    std::copy(sol, sol + m.nodes(), temp1.begin());
     double* sol_vec   = reinterpret_cast<double*>(&temp1[0]);
 
     // Save original derivatives
-    std::copy(derivative, derivative + m.local_nodes(), temp2);
+    std::copy(derivative, derivative + m.nodes(), temp2.begin());
     double* derivative_vec = reinterpret_cast<double*>(&temp2[0]);
 
     // Original residual
@@ -228,7 +231,9 @@ int Preconditioner::setup(
     }
 
     // A CSR sparse matrix used to assemble the nonzero values
-    std::vector< std::map<int, double> > CSR_matrix(N);
+    // number of rows is the number of local_nodes*num_vars
+    //std::vector< std::map<int, double> > CSR_matrix(N);
+    std::vector< std::map<int, double> > CSR_matrix(m.local_nodes()*blocksize);
 
     // Process sets of independent columns
     for (int colour = 0; colour < num_colours; ++colour) {
@@ -245,7 +250,7 @@ int Preconditioner::setup(
         }
 
         // Compute shifted residual
-        compute_residual(temp3, false);
+        compute_residual(reinterpret_cast<fvmpor::hc*>(&temp3[0]), false);
         ++num_callbacks;
 
         // Load the values into the CSR matrix
@@ -253,54 +258,67 @@ int Preconditioner::setup(
             if (colourvec[j] == colour) {
                 for (int i = 0; i < pat[j].size(); ++i) {
                     int row = pat[j][i];
-                    double value = (shift_res[row] - res[row]) / shift[j];
-                    CSR_matrix[row].insert(std::make_pair(j, value));
+                    // ensure only rows associated with local variables are computed
+                    if (row < m.local_nodes() * blocksize) {
+                        double value = (shift_res[row] - res[row]) / shift[j];
+                        CSR_matrix[row].insert(std::make_pair(j, value));
+                    }
                 }
             }
         }
 
     }
 
-    // Copy over CSR matrix into DSS array
-    int p = 0;
-    for (int i = 0; i < N; ++i) {
+    // Create pARMS matrix structure
+    global_row_indices.resize(0);
+    row_index.resize(0);
+    columns.resize(0);
+    values.resize(0);
+
+    int num_rows = m.local_nodes() * blocksize;
+    row_index.push_back(1);
+    for (int i = 0; i < num_rows; ++i) {
+        int local_node_id = i / blocksize;
+        int local_offset  = i % blocksize;
+        int global_node_id = m.global_node_id(local_node_id);
+        int global_row = global_node_id * blocksize + local_offset;
+        global_row_indices.push_back(global_row + 1);
+
+        row_index.push_back(row_index.back() + CSR_matrix[i].size());
+
         std::map<int, double>::iterator it = CSR_matrix[i].begin();
         std::map<int, double>::iterator end = CSR_matrix[i].end();
-        for(; it != end; ++it) {
-            assert(columns[p] == it->first + 1);    // 1-based indexing
-            values[p] = it->second;
-            ++p;
+        for (; it != end; ++it) {
+            int local_node_id = it->first / blocksize;
+            int local_offset  = it->first % blocksize;
+            int global_node_id = m.global_node_id(local_node_id);
+            int global_col = global_node_id * blocksize + local_offset;
+            columns.push_back(global_col + 1);
+            values.push_back(it->second);
         }
+
     }
 
-    /////////////////////////////////////// DEBUG ///////////////////////////////////////
-    /*
-    int id = m.mpicomm()->rank();
-    std::cerr << "P" << id << " : writing preconditioner" << std::endl;
-    std::string fname( "precon_" + util::to_string(id) + ".m");
-    std::ofstream fid(fname.c_str()); 
-    fid.precision(20);
-    fid << "D = [";
-    for(int i=0; i<N; i++){
-        for(int j=row_index[i]-1; j<row_index[i+1]-1; j++){
-            fid << i+1 << " " << columns[j] << " " << values[j] << "; ";
-        }
+    if (map) {
+        parms_wrapperPCFree(pc);
+        parms_wrapperMatFree(matrix);
+        parms_wrapperMapFree(map);
     }
-    fid << "];" << std::endl;
-    fid << "XY = [";
-    for(int i=0; i<N; i++){
-            fid << m.node(i).point().x << " " << m.node(i).point().y << "; ";
-    }
-    fid << "];" << std::endl;
 
-    fid.close();
-    */
-    /////////////////////////////////////// DEBUG ///////////////////////////////////////
+    //mpi::ProcInfo procinfo;
 
-    // Factorise
-    int opt = MKL_DSS_INDEFINITE;
-    int flag = dss_factor_real(dss_handle, opt, &values[0]);
-    assert(flag == MKL_DSS_SUCCESS);
+    map = parms_wrapperMapCreateFromPtr(
+        m.global_nodes(), &nodes[0], &vtxdist[0], MPI_COMM_WORLD, blocksize);
+        //m.global_nodes(), &nodes[0], &vtxdist[0], procinfo.communicator(), blocksize);
+
+    matrix = parms_wrapperMatCreate(map);
+    parms_wrapperMatSetValues(matrix, num_rows, &global_row_indices[0], &row_index[0], &columns[0], &values[0]);
+    parms_wrapperMatSetup(matrix);
+
+    pc = parms_wrapperPCCreate(matrix);
+    parms_wrapperPCSetType(pc, additive_schwarz);
+    parms_wrapperSetILUType(pc, iluk);
+    parms_wrapperPCSetup(pc);
 
     return 0;
 }
@@ -316,13 +334,14 @@ int Preconditioner::apply(
 {
     ++num_applications;
 
-    const double* r = reinterpret_cast<const double*>(&rhs[0]);
+    //const double* r = reinterpret_cast<const double*>(&rhs[0]);
+    //double* zz = reinterpret_cast<double*>(&z[0]);
+
+    double* r = const_cast<double*>(reinterpret_cast<const double*>(&rhs[0]));
     double* zz = reinterpret_cast<double*>(&z[0]);
 
-    int nrhs = 1;
-    int opt = MKL_DSS_REFINEMENT_OFF;
-    int flag = dss_solve_real(dss_handle, opt, r, nrhs, zz);
-    assert(flag == MKL_DSS_SUCCESS);
+    std::cerr << "applying preconditioner" << std::endl;
+    parms_wrapperPCApply(pc, r, zz);
 
     return 0;
 }

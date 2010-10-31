@@ -676,11 +676,13 @@ public:
             int e;
 //#pragma omp parallel for schedule(static) shared(rho_face_ptr, ja, ia) private(e, rho_edge)
             for( e=0; e<m.edges(); e++ ){
-                rho_edge =
-                    rho_vec.at(edge_node_back_[e])*edge_weight_back_.at(e)
-                  + rho_vec.at(edge_node_front_[e])*edge_weight_front_.at(e);
-                for( int j=ia[e]; j<ia[e+1]; j++)
-                    rho_face_ptr[ja[j]] = rho_edge;
+                //if(m.edge(e).back().id()<m.local_nodes() || m.edge(e).front().id()<m.local_nodes()){
+                    rho_edge =
+                        rho_vec.at(edge_node_back_[e])*edge_weight_back_.at(e)
+                      + rho_vec.at(edge_node_front_[e])*edge_weight_front_.at(e);
+                    for( int j=ia[e]; j<ia[e+1]; j++)
+                        rho_face_ptr[ja[j]] = rho_edge;
+                //}
             }
         }
     }
@@ -1137,14 +1139,15 @@ public:
         //////////////////////////////////////////////////////////
         TIndexVec ia_cl, ja_cl;
         TVec weights_cl;
+        int N=m.local_nodes();
 
-        ia_length = m.nodes()+1;
+        ia_length = N+1;
         ia_cl = TIndexVec(ia_length);
         ia_cl[0] = 0;
-        TIndexVec face_counts(m.nodes(),0);
+        TIndexVec face_counts(N,0);
         std::vector<int> col_indexes;
         std::vector<double> weights_tmp;
-        for (int i = 0; i < m.nodes(); ++i) {
+        for (int i = 0; i < N; ++i) {
             const mesh::Volume& v = m.volume(i);
             double w = 1./v.vol();
             std::vector<int> node_faces;

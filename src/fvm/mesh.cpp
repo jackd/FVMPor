@@ -102,7 +102,6 @@ void Mesh::open_mesh_file(const std::string& meshname,
 void Mesh::read_mesh_data(std::ifstream& infile, std::ifstream& propfile) {
     int n_nodes_ext, n_nodes, n_elements;
     read_header_data(infile, n_nodes_ext, n_nodes, n_elements);
-    //read_properties(propfile, n_elements);
     read_external_nodes(infile, n_nodes_ext);
     read_nodes(infile, n_nodes);
     std::set<Edge> edgeset;
@@ -206,28 +205,6 @@ void Mesh::reorder_nodes_edges(std::set<Edge> &edgeset, std::set<Face> &faceset)
             facevec[i].nodevec[j] = q[facevec[i].nodevec[j]];
         for(int j=0; j<facevec[i].edgevec.size(); j++)
             facevec[i].edgevec[j] = qedges[facevec[i].edgevec[j]];
-    }
-}
-
-
-void Mesh::read_properties(std::ifstream& propfile, int n_elements) {
-    if (!propfile || n_elements == 0) return;
-
-    for (int i = 0; i < n_physical_props; ++i) {
-        std::string line;
-        std::getline(propfile, line);
-        std::istringstream iss(line);
-        std::istream_iterator<double> it(iss), end;
-        properties[i].assign(it, end);
-    }
-    if (!propfile)
-        throw IOException("Invalid property file");
-
-    std::size_t prop_count = properties[0].size();
-    for (int i = 1; i < n_physical_props; ++i) {
-        if (properties[i].size() != prop_count) {
-            throw IOException("Invalid data in property file");
-        }
     }
 }
 
@@ -1618,7 +1595,6 @@ std::pair<int, int> find_RCM_from_edges( const std::vector<std::pair<int, int> >
     property_map<Graph, vertex_index_t>::type
     index_map = get(vertex_index, G);
     std::vector<Vertex> inv_perm(num_vertices(G));
-    std::cout << "original bandwidth: " << bandwidth(G) << std::endl;
     int bw_init = bandwidth(G);
 
     //reverse cuthill_mckee_ordering
@@ -1634,9 +1610,6 @@ std::pair<int, int> find_RCM_from_edges( const std::vector<std::pair<int, int> >
     std::vector<size_type> perm(num_vertices(G));
     for (size_type c = 0; c != inv_perm.size(); ++c)
         perm[index_map[inv_perm[c]]] = c;
-    std::cout << "new  bandwidth: " 
-              << bandwidth(G, make_iterator_property_map(&perm[0], index_map, perm[0]))
-              << std::endl;
     int bw_perm = bandwidth(G, make_iterator_property_map(&perm[0], index_map, perm[0]));
     return std::make_pair(bw_init, bw_perm);
 }

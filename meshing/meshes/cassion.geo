@@ -1,4 +1,4 @@
-lc = .3;
+lc = .2;
 width = 8;
 holeWidth = 0.2;
 f1 = 3;

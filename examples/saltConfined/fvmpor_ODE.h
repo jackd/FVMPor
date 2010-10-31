@@ -7,6 +7,15 @@
 
 namespace fvmpor {
 
+template <typename T>
+struct CoordTraits{
+    static bool is_device() {return false;};
+};
+template <>
+struct CoordTraits<lin::gpu::Coordinator<int> >{
+    static bool is_device() {return true;};
+};
+
 // holds two variables : pressure head and salt concentration
 struct hc{
     static const int variables = 2;
@@ -34,6 +43,7 @@ typedef lin::gpu::Coordinator<int> GPUCoord;
 
 typedef DensityDrivenPhysics<hc, CPUCoord, GPUCoord> PhysicsGPU;
 typedef DensityDrivenPhysics<hc, CPUCoord, CPUCoord> PhysicsCPU;
+//typedef PhysicsGPU Physics;
 typedef PhysicsCPU Physics;
 
 } // end namespace fvmpor

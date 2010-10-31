@@ -1,6 +1,6 @@
 width = 200;
 height = 100;
-lc = height/11;
+lc = height/51;
 
 // Points in counterclockwise order
 Point(1) = {0, 0, 0, lc};

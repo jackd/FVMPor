@@ -41,6 +41,7 @@ typedef lin::gpu::Coordinator<int> GPUCoord;
 typedef VarSatPhysics<Head, CPUCoord, GPUCoord> PhysicsGPU;
 typedef VarSatPhysics<Head, CPUCoord, CPUCoord> PhysicsCPU;
 typedef PhysicsGPU Physics;
+//typedef PhysicsCPU Physics;
 
 } // end namespace fvmpor
 

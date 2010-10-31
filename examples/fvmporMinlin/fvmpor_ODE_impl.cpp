@@ -72,6 +72,7 @@ namespace fvmpor {
                                         const_iterator u, const_iterator udash)
     {
         ++num_calls;
+        util::Timer timer;
 
         for (int i = 0; i < m.nodes(); ++i) {
             assert(    u[i].h ==  u[i].h
@@ -80,6 +81,7 @@ namespace fvmpor {
             );
         }
 
+        timer.tic();
         // Copy h and c over to h_vec and c_vec
         const double* source   = reinterpret_cast<const double*>(&u[0]);
         const double* sourcep  = reinterpret_cast<const double*>(&udash[0]);
@@ -126,15 +128,15 @@ namespace fvmpor {
                                        iterator res)
     {
         // collect fluxes to CVs
-        TVecDevice res_tmp(m.nodes());
+        TVecDevice res_tmp(m.local_nodes());
         cvflux_matrix.matvec(M_flux_faces, res_tmp);
 
         // add the source terms here
         //res_tmp += source_vec;
 
         // subtract the lhs
-        //res_tmp.at(all) -= mul(hp_vec_.at(0,m.local_nodes()-1),ahh_vec);
-        res_tmp.at(all) -= mul(hp_vec_,ahh_vec);
+        //res_tmp -= mul(hp_vec_.at(0,res_tmp.dim()-1),ahh_vec);
+        res_tmp -= mul(hp_vec_,ahh_vec);
 
         // Dirichlet boundary conditions
         res_tmp.at(dirichlet_nodes_)  = h_dirichlet_;

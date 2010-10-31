@@ -322,10 +322,14 @@ void IDAIntegrator<Physics, Preconditioner>::advance() {
 template<class Physics, class Preconditioner>
 void IDAIntegrator<Physics, Preconditioner>::advance(double next_time) {
 
+    /*
     value_type* v = reinterpret_cast<value_type*>(NV_DATA_P(ulocal));
     std::copy(&v[0], &v[0]+mesh().local_nodes(), &u[0]);
     v = reinterpret_cast<value_type*>(NV_DATA_P(uplocal));
     std::copy(&v[0], &v[0]+mesh().local_nodes(), &up[0]);
+    */
+    copy_vector(ulocal, u);
+    copy_vector(uplocal, up);
 
     // advance the solution to next_time
     while( (*t)<next_time )

@@ -12,6 +12,7 @@
 #include <util/intvector.h>
 #include <util/interpolation.h>
 #include <util/dimvector.h>
+#include <util/timer.h>
 
 #include <cublas.h>
 #include <mkl_spblas.h>
@@ -100,6 +101,12 @@ protected:
     TIndexVecDevice dirichlet_c_nodes_; // DEVICE
     TVecDevice dirichlet_h_; // DEVICE
     TVecDevice dirichlet_c_; // DEVICE
+    TIndexVecDevice dirichlet_faces_; // DEVICE
+
+    // associated with ASE BCs
+    TIndexVecDevice ASE_faces_, ASE_tags_;
+    TIndexVecDevice boundary_face_nodes_;
+    TVecDevice ASE_concentrations_;
 
     TVecDevice cvface_areas_; // DEVICE
 
@@ -158,7 +165,7 @@ protected:
     // storing derived quantities at cv faces (using c and h values at faces)
     TVecDevice rho_faces_, phi_faces_;
     // storing upwinded/flux limitted values at cv faces
-    TVec rho_faces_lim_, c_faces_lim_;
+    TVecDevice rho_faces_lim_, c_faces_lim_;
     // storing coefficients for derivative terms
     // these are constants
     TVecDevice ahc_vec_;
@@ -218,17 +225,18 @@ public:
  **************************************************************************/
     using mesh::Point;
 
-    template <typename T>
-    double density(T h, T c, const Constants& constants)
+    template <typename TVec>
+    void density(TVec& h, TVec& c, TVec& rho, const Constants& constants)
     {
         double rho_0 = constants.rho_0();
-        double eta = constants.eta();
 
-        return rho_0*(1. + eta*c);
+        rho = c;
+        rho *= constants.rho_0()*constants.eta();
+        rho += constants.rho_0();
     }
 
     template <typename TVec>
-    void density(TVec& h, TVec& c, TVec& rho, const Constants& constants)
+    void density(TVec& c, TVec& rho, const Constants& constants)
     {
         double rho_0 = constants.rho_0();
 
@@ -244,7 +252,9 @@ public:
         node_comm_.set_pattern( "NP_double", m.node_pattern() );
 
         if(CoordTraits_<CoordDeviceInt>::is_device()){
+            std::cout << "intialising cublas" << std::endl;
             assert( cublasInit() == CUBLAS_STATUS_SUCCESS );
+            std::cout << "initialised" << std::endl;
         }
 
         // set physical properties
@@ -350,6 +360,34 @@ public:
         // copy to device
         dirichlet_h_ = dirichlet_h;
         dirichlet_c_ = dirichlet_c;
+
+        // creat flat arrays with information about ASE boundary faces
+        std::vector<int> boundary_face_nodes;
+        std::vector<int> ASE_faces;
+        std::vector<int> ASE_tags;
+        std::vector<double> ASE_concentrations;
+        for(int i=m.interior_cvfaces(); i<m.cvfaces(); i++){
+            boundary_face_nodes.push_back( m.cvface(i).back().id() );
+            int boundary_tag = m.cvface(i).boundary();
+            if(boundary_condition_c(boundary_tag).type()==5){
+                ASE_faces.push_back(i-m.interior_cvfaces());
+                ASE_tags.push_back(boundary_tag);
+                ASE_concentrations.push_back(
+                        boundary_condition_c(boundary_tag).value(0.)
+                );
+            }
+        }
+        // list of all faces that have ASE solute exchange
+        ASE_faces_ = TIndexVec(ASE_faces.begin(), ASE_faces.end());
+        // the BC tag of each ASE face
+        ASE_tags_ = TIndexVec(ASE_tags.begin(), ASE_tags.end());
+        // the concentration associated with inflow at each ASE face
+        ASE_concentrations_ = TVec( ASE_concentrations.begin(),
+                                    ASE_concentrations.end() );
+
+        // list of back nodes associated with each boundary CV face
+        boundary_face_nodes_ = TIndexVec( boundary_face_nodes.begin(),
+                                          boundary_face_nodes.end() );
 
         // initialise vectors used in calculating derived quantities such as saturation
         // allocate room for each of the arrays
@@ -482,14 +520,15 @@ public:
         edge_node_front_ = edge_node_front;
         edge_node_back_  = edge_node_back;
 
-        // initialise the shape functions
-        initialise_shape_functions(m);
-
         // create flat arrays with cv face areas
         TVec cvface_areas(m.cvfaces());
         for(int i=0; i<m.cvfaces(); i++)
             cvface_areas[i] = m.cvface(i).area();
         cvface_areas_ = cvface_areas;
+
+
+        // initialise the shape functions
+        initialise_shape_functions(m);
 
         // initialise flux vecs
         qsat_faces_.set(m.interior_cvfaces(), m.dim());
@@ -532,25 +571,31 @@ public:
     }
 
     template <typename CoordHost, typename CoordDevice>
-    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::process_faces_shape( const mesh::Mesh &m )
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::
+        process_faces_shape( const mesh::Mesh &m )
     {
         density(h_faces_, c_faces_, rho_faces_, constants());
     }
 
     template <typename CoordHost, typename CoordDevice>
-    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::process_faces_lim( const mesh::Mesh &m )
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::
+        process_faces_lim( const mesh::Mesh &m )
     {
         if(CoordTraits_<CoordDeviceInt>::is_device()){
             lin::gpu::collect_edges(
                           rho_vec_.data(), rho_faces_lim_.data(), m.edges(),
                           edge_weight_front_.data(), edge_weight_back_.data(),
                           edge_node_front_.data(), edge_node_back_.data(),
-                          flux_lim_matrix.row_ptrs().data(), flux_lim_matrix.col_indexes().data() );
+                          flux_lim_matrix.row_ptrs().data(),
+                          flux_lim_matrix.col_indexes().data()
+            );
             lin::gpu::collect_edges(
                           c_vec_.data(), c_faces_lim_.data(), m.edges(),
                           edge_weight_front_.data(), edge_weight_back_.data(),
                           edge_node_front_.data(), edge_node_back_.data(),
-                          flux_lim_matrix.row_ptrs().data(), flux_lim_matrix.col_indexes().data() );
+                          flux_lim_matrix.row_ptrs().data(),
+                          flux_lim_matrix.col_indexes().data()
+            );
         }
         else{
             const int *ia = flux_lim_matrix.row_ptrs().data();
@@ -560,7 +605,8 @@ public:
             double rho_edge;
             double c_edge;
             int e;
-//#pragma omp parallel for schedule(static) shared(rho_face_ptr, ja, ia) private(e, rho_edge)
+            int j;
+#pragma omp parallel for schedule(static) shared(rho_face_ptr, c_face_ptr, ja, ia) private(e, j, rho_edge, c_edge)
             for( e=0; e<m.edges(); e++ ){
                 rho_edge =
                     rho_vec_.at(edge_node_back_[e])*edge_weight_back_.at(e)
@@ -568,7 +614,7 @@ public:
                 c_edge =
                     c_vec_.at(edge_node_back_[e])*edge_weight_back_.at(e)
                   + c_vec_.at(edge_node_front_[e])*edge_weight_front_.at(e);
-                for( int j=ia[e]; j<ia[e+1]; j++){
+                for( j=ia[e]; j<ia[e+1]; j++){
                     rho_face_ptr[ja[j]] = rho_edge;
                     c_face_ptr[ja[j]] = c_edge;
                 }
@@ -577,28 +623,28 @@ public:
     }
 
     template <typename CoordHost, typename CoordDevice>
-    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::process_fluxes( double t, const mesh::Mesh &m )
+    void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::
+        process_fluxes( double t, const mesh::Mesh &m )
     {
-       // initialise the flux to zero
+        // initialise the flux to zero
         qdotn_faces_.zero();
         qcdotn_faces_.zero();
 
         double factor = 1./constants().rho_0();
+        int ifaces = m.interior_cvfaces();
         // compute the vector quantity q at each internal CV face
         qsat_faces_.x().at(all) = grad_h_faces_.x();
         qsat_faces_.x() *= K_faces_.x();
         qsat_faces_.y().at(all) = grad_h_faces_.y();
         if( m.dim()==2 ){
-            for(int i=0; i<qsat_faces_.y().dim(); i++)
-                qsat_faces_.y()[i] += factor*rho_faces_[i];
+            qsat_faces_.y() += factor*rho_faces_;
         }else{
             qsat_faces_.z().at(all) = grad_h_faces_.z();
-            qsat_faces_.z() += 1.;
+            qsat_faces_.z() += factor*rho_faces_;
             qsat_faces_.z() *= K_faces_.z();
         }
         qsat_faces_.y() *= K_faces_.y();
 
-        int ifaces = m.interior_cvfaces();
         qdotn_faces_.at(0,ifaces-1) = mul(norm_faces_.x(), qsat_faces_.x());
         qdotn_faces_.at(0,ifaces-1) += mul(norm_faces_.y(), qsat_faces_.y());
         if( m.dim()==3 ){
@@ -609,22 +655,26 @@ public:
         qcdotn_faces_.at(0,ifaces-1) = mul(norm_faces_.x(), grad_c_faces_.x());
         qcdotn_faces_.at(0,ifaces-1) += mul(norm_faces_.y(), grad_c_faces_.y());
         if( m.dim()==3 ){
-            qdotn_faces_.at(0,ifaces-1) += mul(norm_faces_.z(), grad_c_faces_.z());
+            qcdotn_faces_.at(0,ifaces-1) += mul( norm_faces_.z(),
+                                                grad_c_faces_.z() );
         }
 
         qcdotn_faces_.at(0,ifaces-1) *= Dm_faces_;
         qcdotn_faces_.at(all) *= 0.35;
         //qcdotn_faces_.at(0,ifaces-1) *= phi_faces_; // need to find phi at faces
 
-        // find the velocity at each CV face
-        M_flux_faces_.at(0,ifaces-1) = mul(rho_faces_lim_, qdotn_faces_.at(0,ifaces-1));
-        C_flux_faces_.at(0,ifaces-1) = mul(c_faces_lim_, qdotn_faces_.at(0,ifaces-1));
+        // find the mass and solute flux at each interior CV face
+        M_flux_faces_.at(0,ifaces-1) = mul( rho_faces_lim_.at(all),
+                                            qdotn_faces_.at(0,ifaces-1) );
+        C_flux_faces_.at(0,ifaces-1) = mul( c_faces_lim_.at(all),
+                                            qdotn_faces_.at(0,ifaces-1) );
         C_flux_faces_.at(0,ifaces-1) -= qcdotn_faces_.at(0,ifaces-1);
 
         // loop over boundary faces and find fluid flux where explicitly given by BCs
-        int faces_bnd = m.cvfaces()-m.interior_cvfaces();
-        TVec qdotn_faces_bnd(faces_bnd); // temp host vector for computing the boundary fluxes
-        TVec qcdotn_faces_bnd(faces_bnd); // temp host vector for computing the boundary fluxes
+        // temp vectors on host for computing the boundary fluxes
+        int faces_bnd = m.boundary_cvfaces();
+        TVec qdotn_faces_bnd(faces_bnd);
+        TVec qcdotn_faces_bnd(faces_bnd);
         for( int i=0; i<faces_bnd; i++)
         {
             const mesh::CVFace& cvf = m.cvface(i+m.interior_cvfaces());
@@ -636,13 +686,11 @@ public:
             switch( BCh.type() ){
                 // prescribed flux
                 case 3:
-                    //qdotn_faces_bnd[i] = BCh.value(t) * cvf.area();
                     qdotn_faces_bnd[i] = BCh.value(t);
                     break;
                 // prescribed directional flux
                 case 6:
-                    //qdotn_faces_bnd[i] = BCh.flux( t, cvf.normal() );
-                    qdotn_faces_bnd[i] = BCh.flux( t, cvf.normal() )/cvface_areas_[i];
+                    qdotn_faces_bnd[i] = BCh.flux( t, cvf.normal() )/m.cvface(i).area();
                     break;
                 default:
                     break;
@@ -651,14 +699,13 @@ public:
             switch( BCc.type() ){
                 // prescribed flux
                 case 3:
-                    //qcdotn_faces_bnd[i] = BCc.value(t) * cvf.area();
                     qcdotn_faces_bnd[i] = BCc.value(t);
                     break;
                 // prescribed directional flux
                 case 6:
-                    //qcdotn_faces_bnd[i] = BCc.flux( t, cvf.normal() );
                     // we have to scale here because the cvf.normal() is scaled by cvface area
-                    qcdotn_faces_bnd[i] = BCc.flux( t, cvf.normal() )/cvface_areas_[i];
+                    //qcdotn_faces_bnd[i] = BCc.flux( t, cvf.normal() )/cvface_areas_[i];
+                    qcdotn_faces_bnd[i] = BCc.flux( t, cvf.normal() )/m.cvface(i).area();
                     break;
                 default:
                     break;
@@ -667,62 +714,48 @@ public:
         qdotn_faces_.at(ifaces,m.cvfaces()-1) = qdotn_faces_bnd;
         qcdotn_faces_.at(ifaces,m.cvfaces()-1) = qcdotn_faces_bnd;
 
-        for( int i=m.interior_cvfaces(); i<m.cvfaces(); i++)
-        {
-            const mesh::CVFace& cvf = m.cvface(i);
+        // determine flux over Dirichlet faces
+        if(dirichlet_faces_.dim()){
+            TVecDevice flux_tmp(dirichlet_faces_.dim());
+            dirichlet_matrix.matvec( qdotn_faces_, flux_tmp );
+            qdotn_faces_.at(dirichlet_faces_) = flux_tmp;
+        }
 
-            int boundary_tag = cvf.boundary();
-            const BoundaryCondition& BCh = boundary_condition_h( boundary_tag );
+        TVecDevice c_faces(m.boundary_cvfaces());
+        TVecDevice rho_faces(m.boundary_cvfaces());
 
-            //if( is_dirichlet_h_vec_[cvf.back().id()] ) // THIS IS BAD! non-dirichlet faces can have dirichlet back nodes
-            if( BCh.is_dirichlet() )
-            {
-                // in the case of a dirichlet boundary condition on pressure head we calculate the
-                // flux over the control volume face by asserting conservation of mass
-                double total_flux = 0.0;
-                double total_area = 0.0;
+        // set the concentration at each face to be that of its back node
+        c_faces.at(all) = c_vec_.at(boundary_face_nodes_);
 
-                const mesh::Volume& v = cvf.back().volume();
-                for (int ii = 0; ii < v.scvs(); ++ii) {
-                    const mesh::SCV& scv = v.scv(ii);
-                    for (int j = 0; j < scv.cvfaces(); ++j) {
-                        const mesh::CVFace& subcvf = scv.cvface(j);
-                        if( subcvf.id()<m.interior_cvfaces() || !boundary_condition_h(subcvf.boundary()).is_dirichlet() ){
-                            //int sign = subcvf.back().id() == v.id() ? 1 : -1;
-                            int sign = subcvf.back().id() == cvf.back().id() ? 1 : -1;
-                            //total_flux += sign * qdotn_faces_[subcvf.id()];
-                            total_flux += sign * qdotn_faces_[subcvf.id()] * cvface_areas_[i];
-                        } else{
-                            //total_area += subcvf.area();
-                            total_area += cvface_areas_[i];
-                        }
-                    }
-                }
-                //qdotn_faces_[i] = -total_flux / total_area * cvf.area();
-                qdotn_faces_[i] = -total_flux / total_area;
+        // determine the concentration at the ASE faces.
+        // that is, for faces at which net flux is into the domain
+        // choose the concentration provided by the ASE condition
+        if(CoordTraits_<CoordDeviceInt>::is_device()){
+            lin::gpu::set_ASE( ASE_faces_.data(),
+                               //qdotn_faces_.data() + ifaces,
+                               qdotn_faces_.at(ifaces,lin::end).data(),
+                               ASE_concentrations_.data(),
+                               c_faces.data(),
+                               ASE_faces_.dim() );
+        }else{
+            // LIN_DEBUG
+            for(int i=0; i<ASE_faces_.dim(); i++){
+                int f = ASE_faces_[i];
+                if(qdotn_faces_[f+ifaces]<0.)
+                    c_faces[f] = ASE_concentrations_[i];
             }
         }
 
-        // find mass flux over each boundary
-        for( int i=m.interior_cvfaces(); i<m.cvfaces(); i++)
-        {
-            const mesh::CVFace& cvf = m.cvface(i);
+        // find the density at boundary CV faces
+        density(c_faces, rho_faces, constants());
 
-            // choose an appropriate concentration and density if the flow is into the domain
-            double rho_face = rho_vec_[cvf.back().id()];
-            double c_face = c_vec_[cvf.back().id()];
-            int boundary_tag = cvf.boundary();
-            if( qdotn_faces_[i]<=0 && boundary_condition_c(boundary_tag).type()==5 ){
-               c_face = boundary_condition_c( boundary_tag ).value(t);
-            }
-            rho_face = density(0., c_face, constants());
+        // find the mass and solute fluxes over each boundary face
+        M_flux_faces_.at(ifaces,lin::end) =
+                                mul(rho_faces.at(all), qdotn_faces_.at(ifaces,lin::end));
+        C_flux_faces_.at(ifaces,lin::end) =
+                                mul(c_faces.at(all), qdotn_faces_.at(ifaces,lin::end));
 
-            // now form the flux over the face
-            M_flux_faces_[i] = rho_face * qdotn_faces_[i];
-            C_flux_faces_[i] = c_face * qdotn_faces_[i];
-            qcdotn_faces_[i] =  c_face * qdotn_faces_[i];
-        }
-
+        // scale fluxes by CV face areas
         M_flux_faces_ *= cvface_areas_;
         C_flux_faces_ *= cvface_areas_;
     }
@@ -742,9 +775,13 @@ public:
             ////////////////////////////////////////////////////////
             case weightUpwind :
                 if(CoordTraits_<CoordDeviceInt>::is_device()){
+                    // NOTE :
+                    // the front and back weights have been swapped here to account for the
+                    // sign on the flux
                     lin::gpu::set_weights_upwind(
                             edge_flux.data(),
-                            edge_weight_front_.data(), edge_weight_back_.data(),
+                            edge_weight_back_.data(),
+                            edge_weight_front_.data(),
                             m.edges()
                     );
                 }
@@ -875,7 +912,8 @@ public:
     void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::process_derivative_coefficients( const mesh::Mesh &m )
     {
         ahh_ = 0.;
-        ahc_vec_.at(all) = phi_vec_;
+        //std::cerr << ahc_vec_.dim() << " AND " << phi_vec_.dim() << std::endl;
+        ahc_vec_.at(all) = phi_vec_.at(0,m.local_nodes()-1);
         double factor = constants().rho_0() * constants().eta();
         ahc_vec_ *= factor;
         ach_ = 0.;
@@ -909,13 +947,13 @@ public:
         shape_dz = TVec(ja_length);
 
         // Allocate node value arrays
-        h_vec_ = TVec(m.nodes());
-        c_vec_ = TVec(m.nodes());
-        cp_vec_ = TVec(m.nodes());
+        h_vec_ = TVecDevice(m.nodes());
+        c_vec_ = TVecDevice(m.nodes());
+        cp_vec_ = TVecDevice(m.nodes());
 
         // Allocate CVFace centroid arrays
-        h_faces_ = TVec(m.interior_cvfaces());
-        c_faces_ = TVec(m.interior_cvfaces());
+        h_faces_ = TVecDevice(m.interior_cvfaces());
+        c_faces_ = TVecDevice(m.interior_cvfaces());
         grad_h_faces_.set(m.interior_cvfaces(), m.dim());
         grad_c_faces_.set(m.interior_cvfaces(), m.dim());
 
@@ -1017,14 +1055,15 @@ public:
         //////////////////////////////////////////////////////////
         TIndexVec ia_cl, ja_cl;
         TVec weights_cl;
+        int N=m.local_nodes();
 
-        ia_length = m.nodes()+1;
+        ia_length = N+1;
         ia_cl = TIndexVec(ia_length);
         ia_cl[0] = 0;
-        TIndexVec face_counts(m.nodes(),0);
+        TIndexVec face_counts(N,0);
         std::vector<int> col_indexes;
         std::vector<double> weights_tmp;
-        for (int i = 0; i < m.nodes(); ++i) {
+        for (int i = 0; i < N; ++i) {
             const mesh::Volume& v = m.volume(i);
             double w = 1./v.vol();
             std::vector<int> node_faces;
@@ -1058,7 +1097,62 @@ public:
         weights_cl.assign(weights_tmp.begin(), weights_tmp.end());
 
         cvflux_matrix = InterpolationMatrix(ia_cl, ja_cl, weights_cl);
-        //cvflux_matrix.write_to_file("cvMat.m", util::file_format_matlab);
+
+        //////////////////////////////////////////////////////////
+        // MATRIX FOR CALCULATING FLUX OVER DIRICHLET FACES
+        // ? X ?
+        //////////////////////////////////////////////////////////
+        TIndexVec ia_bnd, ja_bnd;
+        TVec weights_bnd;
+
+        // make a list of all the dirichlet faces
+        std::vector<int> dirichlet_faces;
+        for( int i=m.interior_cvfaces(); i<m.cvfaces(); i++){
+            if( boundary_condition_h( m.cvface(i).boundary() ).is_dirichlet() )
+                dirichlet_faces.push_back(i);
+        }
+        dirichlet_faces_ = TIndexVec(dirichlet_faces.begin(), dirichlet_faces.end());
+        ia_bnd = TIndexVec(dirichlet_faces.size()+1);
+        ia_bnd[0] = 0;
+
+        if(dirichlet_faces.size()){
+            std::vector<int> ja_tmp;
+            std::vector<double> w_tmp;
+            for( int i=0; i<dirichlet_faces.size(); i++)
+            {
+                int f = dirichlet_faces[i];
+                const mesh::CVFace& cvf = m.cvface(f);
+
+                double boundary_area = 0.0;
+                double other_area = 0.0;
+                const mesh::Volume& v = cvf.back().volume();
+                for (int ii = 0; ii < v.scvs(); ++ii) {
+                    const mesh::SCV& scv = v.scv(ii);
+                    for (int j = 0; j < scv.cvfaces(); ++j) {
+                        const mesh::CVFace& subcvf = scv.cvface(j);
+                        if( subcvf.id()>=m.interior_cvfaces() && boundary_condition_h(subcvf.boundary()).is_dirichlet() )
+                            boundary_area += m.cvface(subcvf.id()).area();
+                    }
+                }
+                for (int ii = 0; ii < v.scvs(); ++ii) {
+                    const mesh::SCV& scv = v.scv(ii);
+                    for (int j = 0; j < scv.cvfaces(); ++j) {
+                        const mesh::CVFace& subcvf = scv.cvface(j);
+                        int idx = subcvf.id();
+                        if( idx<m.interior_cvfaces() || !boundary_condition_h(subcvf.boundary()).is_dirichlet() ){
+                            int sign = subcvf.back().id() == cvf.back().id() ? -1 : 1;
+                            w_tmp.push_back(sign*m.cvface(idx).area()/boundary_area);
+                            ja_tmp.push_back(idx);
+                        }
+                    }
+                }
+                ia_bnd[i+1] = ja_tmp.size();
+            }
+            ja_bnd.assign(ja_tmp.begin(), ja_tmp.end());
+            weights_bnd.assign(w_tmp.begin(), w_tmp.end());
+
+            dirichlet_matrix = InterpolationMatrix(ia_bnd, ja_bnd, weights_bnd);
+        }
     }
 
     // get a copy of a set of physical zone properties

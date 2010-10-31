@@ -129,6 +129,7 @@ try {
 #endif
 
 
+
     //double maxTimestep = 30.*60.;
     //double maxTimestep = 6.*60.*60.;
     double maxTimestep = 0.;
@@ -156,30 +157,16 @@ try {
     std::cerr << "finished" << std::endl;
 
     ////////////////// DEBUG ///////////////////
-    std::ofstream fidic("ic.m");
+    /*
+    std::ofstream fidic("ic.txt");
     fidic.precision(20);
-    fidic << "Y0 = [";
     for(int i=0; i<mesh.local_nodes(); i++)
-        fidic << y0[i].h << "; ";
+        fidic << y0[i].h << " ";
     for(int i=0; i<mesh.local_nodes(); i++)
-        fidic << y0[i].c << "; ";
-    fidic << "];" << std::endl;
+        fidic << y0[i].c << " ";
+    fidic << std::endl;
     fidic.close();
-
-    std::ofstream fidicp("icp.m");
-    fidicp.precision(20);
-    fidicp << "YP0 = [";
-    for(int i=0; i<mesh.local_nodes(); i++)
-        fidicp << yp0[i].h << "; ";
-    for(int i=0; i<mesh.local_nodes(); i++)
-        fidicp << yp0[i].c << "; ";
-    fidicp << "];" << std::endl;
-    fidicp.close();
-    
-    std::vector<double> res(2*mesh.local_nodes());
-    std::cerr << "residual evaluation with initial conditions : ";
-    physics.residual_evaluation( 0., mesh, reinterpret_cast<const hc*>(&y0[0]), reinterpret_cast<const hc*>(&yp0[0]), reinterpret_cast<hc*>(&res[0]));
-    exit(0);
+    */
     ////////////////// DEBUG ///////////////////
 
     std::string filename;
@@ -196,7 +183,6 @@ try {
         solution.add( t0, solver.begin(), solver.end_ext() );
         solution.write_timestep_VTK_XML( 0, mesh, filename );
     }
-
 
     //int nt = round(final_time/3600);
     int nt = 11;
@@ -229,30 +215,28 @@ try {
         time_vec[i+1] = nextTime;
         nextTime = t0 + (double)(i+2)*dt;
     }
+
     double finalTime = MPI_Wtime() - startTime;
-    if( mpicomm->rank()==0)
+
+
+    if( mpicomm->rank()==0){
         std::cout << std::endl << "Simulation took : " << finalTime << " seconds" << std::endl;
-            // output step orders
-            //
-    const std::vector<int>& orders = integrator.step_orders();
-    std::cerr << "orders = [";
-    for( int i=0; i<orders.size(); i++ )
-        std::cerr << orders[i] << " ";
-    std::cerr << "];" << std::endl;
+
+        // write the timestep orders
+        const std::vector<int>& orders = integrator.step_orders();
+        std::cerr << "orders = [";
+        for( int i=0; i<orders.size(); i++ )
+            std::cerr << orders[i] << " ";
+        std::cerr << "];" << std::endl;
+        const std::vector<double>& sizes = integrator.step_sizes();
+        std::cerr << "stepSizes = [";
+        for( int i=0; i<sizes.size(); i++ )
+            std::cerr << sizes[i] << " ";
+        std::cerr << "];" << std::endl;
+    }
 
     if( mpicomm->size()==1)
     {
-        if(false){
-            std::ofstream ICFile;
-            ICFile.open( "ICvs.txt" );
-            assert( ICFile );
-            ICFile.precision(10);
-            ICFile << mesh.nodes() << std::endl;
-            for(int i=0; i<mesh.nodes(); i++)
-                ICFile << solver.begin()[i].h << std::endl;
-            ICFile.close();
-        }
-
         // open file for output of stats
         std::ofstream mfid;
         std::string mfile_name;

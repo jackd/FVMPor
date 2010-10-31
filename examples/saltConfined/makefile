@@ -1,7 +1,9 @@
 cc=icc
 CC=icpc
 localOPTS=-DMPICH_IGNORE_CXX_SEEK -DUSE_MINLIN -DUSE_MKL
-debugOPTS=-g -O0
+debugOPTS=-g -O3
+#debugOPTS=-g -O0 -DLIN_NODIRECTGPU -fno-inline
+#debugOPTS=-g -O0 -DLIN_DEBUG
 parmsOPTS=-DUSE_MPI -DREAL=double -DDBL -DHAS_BLAS -DFORTRAN_UNDERSCORE -DVOID_POINTER_SIZE_8
 #debugOPTS=-DMPICH_IGNORE_CXX_SEEK -DFVM_DEBUG -DMESH_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC -DVECTOR_DEBUG -g -O0 -fno-inline
 RM=rm -f
@@ -26,8 +28,8 @@ LIB=$(MKL) $(SUNDIALS) -lmpi -lpthread -lcublas -lcusparse
 MESH=../../mesh.o
 UTIL=$(MINLIN)/cuda.o
 
-#preconOPTS=-DPRECON_PARMS -DPRECON
-#PRECON=parms_wrapper.o preconditioner_parms.o
+#preconOPTS=-DPRECON_PARMS -DPRECON -L/opt/pARMS -I/opt/pARMS/include
+#PRECON=parms_wrapper.o preconditioner_parms.o -lparms
 #PRECON_DAE=parms_wrapper.o preconditioner_parms_DAE.o
 
 preconOPTS=-DPRECON_DSS -DPRECON
@@ -41,7 +43,7 @@ PRECON_DAE=preconditioner_dss_DAE.o
 IMPLEMENTATIONDEPS_ODE=fvmpor_ODE.o fvmpor.o fvmpor_ODE_impl.o  shape.o $(MESH) $(UTIL) $(PRECON)
 IMPLEMENTATIONDEPS_DAE=fvmpor_DAE.o fvmpor.o fvmpor_DAE_impl.o  shape.o $(MESH) $(UTIL) $(PRECON_DAE)
 
-OPTS=$(localOPTS) $(debugOPTS) $(preconOPTS)
+OPTS=$(localOPTS) $(debugOPTS) $(preconOPTS) -openmp
 
 # ...............
 # all
@@ -63,11 +65,12 @@ henryDAE: henry.h $(IMPLEMENTATIONDEPS_DAE)
 # ............
 # Object files
 # ............
-fvmpor_ODE.o : fvmpor_ODE.h preconditioner_dss.h fvmpor_ODE.cpp
+fvmpor_ODE.o : salt.h fvmpor_ODE.h preconditioner_dss.h fvmpor_ODE.cpp
 	$(CC) $(OPTS) $(INCLUDE) -c fvmpor_ODE.cpp
 
-fvmpor_ODE_impl.o : fvmpor_ODE.h fvmpor_ODE_impl.cpp fvmpor.h
-	$(CC) $(OPTS) -DPROBLEM_HENRY $(INCLUDE) -c fvmpor_ODE_impl.cpp
+fvmpor_ODE_impl.o : salt.h fvmpor_ODE.h fvmpor_ODE_impl.cpp fvmpor.h
+	$(CC) $(OPTS) -DPROBLEM_SALT $(INCLUDE) -c fvmpor_ODE_impl.cpp
+	#$(CC) $(OPTS) -DPROBLEM_HENRY $(INCLUDE) -c fvmpor_ODE_impl.cpp
 
 fvmpor.o : fvmpor.h fvmpor.cpp
 	$(CC) $(OPTS) $(INCLUDE) -c fvmpor.cpp
@@ -77,7 +80,6 @@ fvmpor_DAE.o : fvmpor_DAE.h fvmpor.h preconditioner_dss_DAE.h fvmpor_DAE.cpp
 
 fvmpor_DAE_impl.o : henry.h fvmpor_DAE.h fvmpor_DAE_impl.cpp fvmpor.h
 	$(CC) $(OPTS) -DPROBLEM_HENRY $(INCLUDE) -c fvmpor_DAE_impl.cpp
-	#$(CC) $(OPTS) -DPROBLEM_SALT $(INCLUDE) -c fvmpor_DAE_impl.cpp
 
 preconditioner_parms.o : preconditioner_parms.h preconditioner_parms.cpp
 	$(CC) $(OPTS) $(INCLUDE) -c preconditioner_parms.cpp

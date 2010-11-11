@@ -252,7 +252,7 @@ public:
     }
 
     // barrier
-    void Barrier(){
+    void barrier(){
         *this << "MPI_Barrier" << std::endl;
         MPI_Barrier( comm_ );
         *this << "\tMPI_Barrier finished" << std::endl;

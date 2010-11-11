@@ -83,6 +83,8 @@ namespace fvmpor {
 
         timer.tic();
         // Copy h and c over to h_vec and c_vec
+        // DOM TIM - do we need the derivatives here? They are not needed for the
+        // residual evaluation, are they?
         const double* source   = reinterpret_cast<const double*>(&u[0]);
         const double* sourcep  = reinterpret_cast<const double*>(&udash[0]);
         double* target  = h_vec.data();
@@ -106,7 +108,6 @@ namespace fvmpor {
         }
 
         // determine the p-s-k values
-        //timer.tic();
         process_volumes_psk( m );
 
         // determine derivative coefficients
@@ -131,15 +132,15 @@ namespace fvmpor {
         TVecDevice res_tmp(m.local_nodes());
         cvflux_matrix.matvec(M_flux_faces, res_tmp);
 
-        // add the source terms here
-        //res_tmp += source_vec;
-
-        // subtract the lhs
-        res_tmp -= mul(hp_vec_,ahh_vec);
+        // divide by the coefficient in front of the derivative
+        res_tmp /= ahh_vec;
+        //res_tmp -= mul(hp_vec_,ahh_vec);
 
         // Dirichlet boundary conditions
-        res_tmp.at(dirichlet_nodes_)  = h_dirichlet_;
-        res_tmp.at(dirichlet_nodes_) -= h_vec.at(dirichlet_nodes_);
+        // these need to change to be compatable with the strict
+        // ODE formulation of the EEM
+        //res_tmp.at(dirichlet_nodes_)  = h_dirichlet_;
+        //res_tmp.at(dirichlet_nodes_) -= h_vec.at(dirichlet_nodes_);
 
         // copy solution into res
         res_tmp.dump(reinterpret_cast<double*>(&res[0]));

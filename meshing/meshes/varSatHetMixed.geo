@@ -1,8 +1,8 @@
-width = .5;
+width = 1;
 height = .5;
-lc = height/21 - height*1e-8;
-lcBlock = lc/20;
-blockDepth = lcBlock;
+lc = height/11 - height*1e-8;
+lcBlock = lc/3;
+blockDepth = lcBlock*5;
 holeWidth = 0.3*width;
 blockWidth = 0.9*width;
 
@@ -37,8 +37,8 @@ Line Loop(30) = {1,2,3,4,5, -extSurf[3],extSurf[0],-extSurf[2] ,9};
 
 Plane Surface(40) = {30};
 
-Physical Surface(100) = {40};
-Physical Surface(101) = {extSurf[1]};
+Physical Surface(100) = {40,extSurf[1]};
+//Physical Surface(101) = {extSurf[1]};
 Physical Line(1) = {1,2,3,5,10,9};
 Physical Line(2) = {4};
 

@@ -123,10 +123,9 @@ namespace fvmpor {
                                        iterator res)
     {
         // collect fluxes to CVs
-        //cvflux_matrix.matvec(M_flux_faces, res_tmp.at(0.,m.local_nodes()-1));
         cvflux_matrix.matvec(M_flux_faces, res_tmp.data());
 
-        // add the source terms here
+        // add the source terms
         //res_tmp += source_vec;
 
         // subtract the lhs
@@ -139,6 +138,11 @@ namespace fvmpor {
         res_tmp.at(m.local_nodes(), lin::end) -= M_vec_.at(0, m.local_nodes()-1);
 
         // copy solution into res
+        res_tmp_host.at(all) = res_tmp;
+        res_tmp_host.at(0,2,lin::end).dump(reinterpret_cast<double*>(&res[0]));
+        res_tmp_host.at(1,2,lin::end).dump(reinterpret_cast<double*>(&res[0])+1);
+
+        /*
         if( CoordTraits<impl::CoordDeviceInt>::is_device() ){
             // copy data to the host
             cudaMemcpy( res_tmp_host.data(), res_tmp.data(),
@@ -156,6 +160,7 @@ namespace fvmpor {
             vdUnpackI(N,  res_tmp.data(),    target,   2);
             vdUnpackI(N,  res_tmp.data()+N,  target+1, 2);
         }
+        */
     }
 
     template<>

@@ -226,22 +226,11 @@ public:
     using mesh::Point;
 
     template <typename TVec>
-    void density(TVec& h, TVec& c, TVec& rho, const Constants& constants)
-    {
-        double rho_0 = constants.rho_0();
-
-        rho = c;
-        rho *= constants.rho_0()*constants.eta();
-        rho += constants.rho_0();
-    }
-
-    template <typename TVec>
     void density(TVec& c, TVec& rho, const Constants& constants)
     {
-        double rho_0 = constants.rho_0();
+        double factor = constants.rho_0()*constants.eta();
 
-        rho = c;
-        rho *= constants.rho_0()*constants.eta();
+        rho.at(all) = factor*c;
         rho += constants.rho_0();
     }
 
@@ -574,7 +563,8 @@ public:
     void DensityDrivenPhysicsImpl<CoordHost,CoordDevice>::
         process_faces_shape( const mesh::Mesh &m )
     {
-        density(h_faces_, c_faces_, rho_faces_, constants());
+        //density(h_faces_, c_faces_, rho_faces_, constants());
+        density( c_faces_, rho_faces_, constants());
     }
 
     template <typename CoordHost, typename CoordDevice>
@@ -633,17 +623,17 @@ public:
         double factor = 1./constants().rho_0();
         int ifaces = m.interior_cvfaces();
         // compute the vector quantity q at each internal CV face
-        qsat_faces_.x().at(all) = grad_h_faces_.x();
-        qsat_faces_.x() *= K_faces_.x();
-        qsat_faces_.y().at(all) = grad_h_faces_.y();
+        qsat_faces_.x().at(all) = mul(grad_h_faces_.x(), K_faces_.x());
         if( m.dim()==2 ){
+            qsat_faces_.y().at(all) = grad_h_faces_.y();
             qsat_faces_.y() += factor*rho_faces_;
+            qsat_faces_.y() *= K_faces_.y();
         }else{
+            qsat_faces_.y().at(all) = mul(grad_h_faces_.y(), K_faces_.y());
             qsat_faces_.z().at(all) = grad_h_faces_.z();
             qsat_faces_.z() += factor*rho_faces_;
             qsat_faces_.z() *= K_faces_.z();
         }
-        qsat_faces_.y() *= K_faces_.y();
 
         qdotn_faces_.at(0,ifaces-1) = mul(norm_faces_.x(), qsat_faces_.x());
         qdotn_faces_.at(0,ifaces-1) += mul(norm_faces_.y(), qsat_faces_.y());
@@ -738,11 +728,17 @@ public:
                                c_faces.data(),
                                ASE_faces_.dim() );
         }else{
-            // LIN_DEBUG
-            for(int i=0; i<ASE_faces_.dim(); i++){
-                int f = ASE_faces_[i];
-                if(qdotn_faces_[f+ifaces]<0.)
-                    c_faces[f] = ASE_concentrations_[i];
+            int i, f;
+            double *c_ptr = c_faces.data();
+            double *ASE_c_ptr = ASE_concentrations_.data();
+            double *q_ptr = qdotn_faces_.data();
+            int *ASE_f_ptr = ASE_faces_.data();
+
+#pragma omp parallel for schedule(static) shared(ifaces, c_ptr, ASE_c_ptr, ASE_f_ptr) private(i, f)
+            for(i=0; i<ASE_faces_.dim(); i++){
+                f = ASE_f_ptr[i];
+                if(q_ptr[f+ifaces]<0.)
+                    c_ptr[f] = ASE_c_ptr[i];
             }
         }
 
@@ -905,7 +901,8 @@ public:
 
         // find the CV-averaged density - this is much simpler because density is not dependant on material properties
         // of the porous medium
-        density(h_vec_, c_vec_, rho_vec_, constants());
+        //density(h_vec_, c_vec_, rho_vec_, constants());
+        density(c_vec_, rho_vec_, constants());
     }
 
     template <typename CoordHost, typename CoordDevice>

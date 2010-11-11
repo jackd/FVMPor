@@ -15,7 +15,12 @@ void VarSatPhysicsImpl<CoordLocal,CoordCompute>::set_initial_conditions( double 
         double x = p.x;
         double el = dimension == 2 ? p.y : p.z;
     
+        // initial pressure head is -1 everwhere away from
+        // the boundaries
         h_vec[i] = -1.;
+
+        // set head on dirichlet boundaries according to the
+        // specified value
         if( is_dirichlet_h_vec_[i] ){
             int tag = is_dirichlet_h_vec_[i];
             int type = boundary_condition_h(tag).type();
@@ -37,7 +42,6 @@ void VarSatPhysicsImpl<CoordLocal,CoordCompute>::set_physical_zones( void )
     double g =  constants().g();
     double beta = constants().beta();
     double mu = constants().mu();
-    //double alpha = 1e-8;
     double alpha = 0.;
 
     PhysicalZone zone;
@@ -54,13 +58,6 @@ void VarSatPhysicsImpl<CoordLocal,CoordCompute>::set_physical_zones( void )
     zone.S_op = ((1.0-zone.phi) * zone.alpha + zone.phi * beta);
 
     physical_zones_.push_back(zone);
-
-    /*
-    double KFactor = 1.e10;
-    zone.K_xx = zone.K_xx*KFactor;
-    zone.K_zz = zone.K_zz*KFactor;
-    physical_zones_.push_back(zone);
-    */
 }
 
 // set constants for simulation
@@ -77,11 +74,9 @@ void VarSatPhysicsImpl<CoordLocal,CoordCompute>::set_boundary_conditions(){
 
     // inflow on top LHS boundary
     boundary_conditions_h_[2] = BoundaryCondition::PrescribedFlux(-2.e-5);
-    //boundary_conditions_h_[2] = BoundaryCondition::Dirichlet(0.);
 
-    // rhs boundary
+    // rhs boundary no flux
     boundary_conditions_h_[3] = BoundaryCondition::PrescribedFlux(0.);
-    //boundary_conditions_h_[3] = BoundaryCondition::Hydrostatic(-1.,0.);
 }
 
 }

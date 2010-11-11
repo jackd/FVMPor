@@ -185,7 +185,7 @@ try {
     }
 
     //int nt = round(final_time/3600);
-    int nt = 11;
+    int nt = 1;
 
     // initialise mass balance stats, and store for t0
     DoubleVector fluid_mass(nt+1);

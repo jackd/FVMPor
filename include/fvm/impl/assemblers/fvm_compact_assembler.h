@@ -64,9 +64,6 @@ template<typename Iterator>
 int FVMAssembler<Physics>::compute_residual(
     double time, const_iterator u, const_iterator up, Iterator res) {
 
-    util::Timer timer;
-    timer.tic();
-
     // Preprocess
     physics().preprocess_evaluation(time, mesh(), u, up);
 
@@ -76,8 +73,6 @@ int FVMAssembler<Physics>::compute_residual(
     // Postprocess
     physics().postprocess_evaluation(time, mesh(), u, up);
 
-    double time_taken = timer.toc();
-    //std::cerr << "F evaluation took " << time_taken << " seconds" <<std::endl;
     return 0;
 }
 

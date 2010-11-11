@@ -11,6 +11,7 @@
 #include <fvm/solver.h>
 #include <fvm/integrators/ida_integrator.h>
 #include <mpi/mpicomm.h>
+#include <mpi/ompaffinity.h>
 #include <fvm/impl/communicators/communicator.h>
 #include <util/solution.h>
 
@@ -79,14 +80,25 @@ int main(int argc, char* argv[]) {
 
     const char* usage = " meshfile finalTime [outfile]\n";
 
-    const double abstol = 1.0e-3;
-    const double reltol = 1.0e-3;
+    const double abstol = 5.0e-4;
+    const double reltol = 5.0e-4;
 
     using namespace fvmpor;
 try {
     // Initialise MPI
     mpi::Process process(argc, argv);
     mpi::MPICommPtr mpicomm( new mpi::MPIComm(MPI_COMM_WORLD, "WORLD") );
+
+    // set omp affinity
+    mpi::OMPAffinity omp_affinity;
+    std::vector<int> my_cores( omp_affinity.get_cores(mpicomm) );
+
+    int num_threads = omp_affinity.max_threads();
+    std::vector<int> cores;
+    assert(num_threads<=my_cores.size());
+    for(int i=0; i<num_threads; i++)
+        cores.push_back(my_cores[i]);
+    omp_affinity.set_affinity(cores);
 
     // verify that the user has passed enough command line arguments
     if (argc < 3 || argc > 4) {
@@ -131,7 +143,7 @@ try {
     //double maxTimestep = 30.*60.;
     //double maxTimestep = 6.*60.*60.;
     double maxTimestep = 0.;
-    int maxOrder = 5;
+    int maxOrder = 3;
     if(maxTimestep>0.)
         integrator.set_max_timestep(maxTimestep);
     if(maxOrder!=5)

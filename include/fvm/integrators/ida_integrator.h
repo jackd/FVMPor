@@ -187,6 +187,9 @@ initialise(double& tt, iterator y, iterator yp, Callback callback)
         mesh().global_nodes() * variables_per_node);
     assert(ulocal);
     value_type* uvec = reinterpret_cast<value_type*>(NV_DATA_P(ulocal));
+    // DEVICE
+    // need to use minlin to make this transfer
+    // and others like it below
     std::copy(&u[0], &u[0] + mesh().local_nodes(), uvec);
 
     // Initialise derivative vector
@@ -212,6 +215,12 @@ initialise(double& tt, iterator y, iterator yp, Callback callback)
     assert(uplocal);
 
     // Initialise weights vector
+    // DEVICE
+    // we could crate minlin vectors based on a communicator,
+    // then declare weights as N_VNewEmpty_Parrallel
+    // and attach it to the minlin vector using
+    // N_VSetArrayPointer_Parallel(minlin_vec.data(), weights)
+    // and do similarly for the vectors below
     weights = N_VNew_Parallel(
         procinfo->communicator(),
         mesh().local_nodes() * variables_per_node,
@@ -300,6 +309,9 @@ Preconditioner& IDAIntegrator<Physics, Preconditioner>::preconditioner() {
 // Advances solution by one internal timestep
 template<class Physics, class Preconditioner>
 void IDAIntegrator<Physics, Preconditioner>::advance() {
+    // DEVICE
+    // the interface could be changed so that u and up
+    // are references to minlin vectors
     physics.preprocess_timestep( *t, m, u, up );
     int flag = IDASolve(
         ida_mem, 1.0, t, ulocal, uplocal, IDA_ONE_STEP);
@@ -314,6 +326,10 @@ void IDAIntegrator<Physics, Preconditioner>::advance() {
     flag = IDAGetLastStep(ida_mem, &step_last);
     step_sizes_.push_back(step_last);
 
+    // DEVICE
+    // if we use minlin vectors that are attached to empty NVector types we
+    // don't have to make copies like this because IDA would make changes
+    // to the vector itself.
     copy_vector(ulocal, u);
     copy_vector(uplocal, up);
 }

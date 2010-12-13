@@ -56,6 +56,8 @@ protected:
     int u_comm_tag_, up_comm_tag_;
     Physics& p;
     double t;
+    // DECIVE
+    // use minlin to store these vectors
     std::vector<value_type> u;
     std::vector<value_type> up;
     std::vector<value_type> temp;
@@ -127,6 +129,8 @@ Solver<Physics, Integrator>::Solver(const Mesh& m, Physics& p, Integrator& I, do
 template<class Physics>
 template<typename Iterator>
 int SolverBase<Physics>::compute_residual(Iterator res, bool communicate) {
+    // DEVICE
+    // this needs to change to reflect possible host-device transfers
     if (communicate) {
         node_comm_.send(u_comm_tag_);
         node_comm_.send(up_comm_tag_);

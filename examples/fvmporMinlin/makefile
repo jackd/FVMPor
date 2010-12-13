@@ -23,7 +23,8 @@ LIBS=-L/opt/intel/impi/3.2/lib -L/opt/intel/Compiler/11.1/069/mkl/lib/32 -L/opt/
 endif
 
 #SUNDIALS=-lsundials_idas -lsundials_nvecparallel
-SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel.a
+#SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel.a
+SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel_cuda.a
 
 LIB=$(MKL) $(SUNDIALS) -lmpi -lpthread -lcublas -lcusparse -lcuda
 MESH=../../mesh.o
@@ -56,6 +57,9 @@ all: cassion vs cassionM vsM
 # ................
 cassion: cassion.h fvmpor_ODE_impl.cpp $(IMPLEMENTATIONDEPS_ODE)
 	$(CC) $(OPTS) $(INCLUDE) $(LIBS) -o cassion fvmpor_ODE_impl.cpp -DPROBLEM_CASSION $(IMPLEMENTATIONDEPS_ODE) $(LIB)
+
+test: test.cpp
+	$(CC) $(OPTS) $(INCLUDE) $(LIBS) -o test test.cpp $(UTIL) $(LIB)
 
 cassionM: cassion.h fvmpor_DAE_impl.cpp $(IMPLEMENTATIONDEPS_DAE)
 	$(CC) $(OPTS) $(INCLUDE) $(LIBS) -o cassionM fvmpor_DAE_impl.cpp -DPROBLEM_CASSION $(IMPLEMENTATIONDEPS_DAE) $(LIB)
@@ -113,4 +117,5 @@ clean:
 	$(RM) cassionM
 	$(RM) vs
 	$(RM) vsM
+	$(RM) test
 	$(RM) *.o

@@ -9,24 +9,26 @@ void VarSatPhysicsImpl<CoordLocal,CoordCompute>::set_initial_conditions( double 
     //spatial_weighting = weightAveraging; // of weightUpwind, weightAveraging, weightVanLeer
     spatial_weighting = weightUpwind; // of weightUpwind, weightAveraging, weightVanLeer
 
+    TVec h_vec_host(m.local_nodes());
     for (int i = 0; i < m.local_nodes(); ++i) {
         const mesh::Node& n = m.node(i);
         Point p = n.point();
         double x = p.x;
         double el = dimension == 2 ? p.y : p.z;
     
-        h_vec[i] = -1.;
+        h_vec_host[i] = -1.;
         if( is_dirichlet_h_vec_[i] ){
             int tag = is_dirichlet_h_vec_[i];
             int type = boundary_condition_h(tag).type();
             // dirichlet
             if( type==1 ) 
-                h_vec.at(i) = boundary_condition_h(tag).value(t);
+                h_vec_host.at(i) = boundary_condition_h(tag).value(t);
             // dirichlet hydrostatic
             else if( type==4 )
-                h_vec.at(i) = boundary_condition_h(tag).hydrostatic(t, el);
+                h_vec_host.at(i) = boundary_condition_h(tag).hydrostatic(t, el);
         }
     }
+    h_vec.at(0,h_vec_host.size()-1) = h_vec_host;
 }
 
 // set physical zones

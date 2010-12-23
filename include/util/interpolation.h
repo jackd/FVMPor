@@ -7,8 +7,7 @@
 #include <cuda_runtime.h>
 #include <cusparse.h>
 
-#include <lin/lin.h>
-#include <lin/coordinators/gpu/coordinator.h>
+#include <util/coordinators.h>
 
 #include <util/mklallocator.h>
 #include <mkl_spblas.h>
@@ -19,16 +18,6 @@
 namespace util{
 
 enum sparse_file_format {file_format_matlab};
-
-template <typename T>
-struct CoordTraits{
-    static bool is_device() {return false;};
-};
-template <>
-struct CoordTraits<lin::gpu::Coordinator<int> >{
-    static bool is_device() {return true;};
-};
-
 
 // Interpolation matrix. In the most general sense this type is used
 // for weighted linear maps from one vector to another.

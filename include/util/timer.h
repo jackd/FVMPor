@@ -11,13 +11,13 @@ namespace util{
             Timer() : recording_(false) {};
 
             // start the timer
-            inline void tic(){
+            void tic(){
                 recording_ = true;
                 t_tic_ =  dsecnd();
             };
 
             // stop the timer and return time
-            inline double toc(){
+            double toc(){
                 assert(recording_);
                 recording_ = false;
                 return dsecnd()-t_tic_;
@@ -25,9 +25,14 @@ namespace util{
 
             // return time since last tic
             // but don't stop the timer
-            inline double toc_continue(){
+            double toc_continue(){
                 assert(recording_);
                 return dsecnd()-t_tic_;
+            };
+
+            void pause(double t){
+                tic();
+                while(toc_continue()<t);
             };
 
             bool is_recording(){

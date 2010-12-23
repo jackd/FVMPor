@@ -347,10 +347,13 @@ class SolverBase;
 template<class Physics>
 class Callback {
 public:
+    typedef typename Physics::TVecDevice TVecDevice;
     Callback() : solver() {};
     Callback(SolverBase<Physics>* solver) : solver(solver) {};
-    template<typename Iterator>
-    int operator()(Iterator it, bool communicate);
+    // DEVICE
+    int operator()(TVecDevice &y, bool communicate);
+    //template<typename Iterator>
+    //int operator()(Iterator it, bool communicate);
 private:
     SolverBase<Physics>* solver;
 };

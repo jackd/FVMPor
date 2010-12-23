@@ -1,11 +1,6 @@
 #include "fvmpor_ODE.h"
 
-#ifdef PRECON_DSS
-    #include "preconditioner_dss.h"
-#endif
-#ifdef PRECON_PARMS
-    #include "preconditioner_parms.h"
-#endif
+#include "preconditioner_dss.h"
 
 #include <fvm/fvm.h>
 #include <fvm/solver.h>
@@ -89,6 +84,11 @@ try {
     mpi::Process process(argc, argv);
     mpi::MPICommPtr mpicomm( new mpi::MPIComm(MPI_COMM_WORLD, "WORLD") );
 
+    if(mpicomm->rank()==0){
+        std::cerr << "==============================================================" << std::endl;
+        std::cerr << "                      HARDWARE" << std::endl;
+    }
+
     // set omp affinity
     mpi::OMPAffinity omp_affinity;
     std::vector<int> my_cores( omp_affinity.get_cores(mpicomm) );
@@ -99,6 +99,32 @@ try {
     for(int i=0; i<num_threads; i++)
         cores.push_back(my_cores[i]);
     omp_affinity.set_affinity(cores);
+
+    if(mpicomm->rank()==0)
+        std::cerr << "There are " << mpicomm->size() << " MPI processes, each with " << num_threads << " OpenMP threads" << std::endl;
+    // initialise CUDA
+#ifdef USE_CUDA
+    {
+            if(mpicomm->rank()==0)
+                std::cout << "Initialising GPU... " << std::endl;
+            int num_devices = lin::gpu::num_devices();
+            int num_processes = mpicomm->size();
+            int this_process = mpicomm->rank();
+            assert(num_processes<=num_devices);
+            lin::gpu::set_device(this_process);
+            std::string device_name = lin::gpu::get_device_name();
+            assert( cublasInit() == CUBLAS_STATUS_SUCCESS );
+            for(int i=0; i<mpicomm->size(); i++){
+                if(mpicomm->rank()==i)
+                    std::cerr << "\tMPI process " << i << " using device " << this_process
+                          << " : " << device_name << std::endl;
+                mpicomm->barrier();
+            }
+    }
+#endif
+
+    if(mpicomm->rank()==0)
+        std::cerr << "==============================================================" << std::endl;
 
     // verify that the user has passed enough command line arguments
     if (argc < 3 || argc > 4) {
@@ -124,6 +150,7 @@ try {
     Physics physics;
     *mpicomm << "initialised physics" << std::endl;
     Preconditioner preconditioner;
+    preconditioner.initialise(mesh);
     *mpicomm << "initialised preconditioner" << std::endl;
     Integrator integrator(mesh, physics, preconditioner, reltol, abstol);
     *mpicomm << "initialised integrator" << std::endl;
@@ -139,6 +166,8 @@ try {
     Solver solver(mesh, physics, integrator);
     *mpicomm << "initialised solver" << std::endl;
 #endif
+
+    typedef typename Physics::TVec TVec;
 
     //double maxTimestep = 30.*60.;
     //double maxTimestep = 6.*60.*60.;
@@ -162,16 +191,19 @@ try {
     util::Solution<Head> solution(mpicomm);
     double t0 = solver.time();
     if(output_run){
-        solution.add( t0, solver.begin(), solver.end_ext() );
+        // make a temporary vector on the host because the solution
+        // returned by the solver may be on the device
+        TVec sol(solver.solution());
+        solution.add( t0, sol );
         solution.write_timestep_VTK_XML( 0, mesh, filename );
     }
     //int nt = round(final_time/3600);
     int nt = 11;
 
     // initialise mass balance stats, and store for t0
-    DoubleVector fluid_mass(nt+1);
+    //DoubleVector fluid_mass(nt+1);
     DoubleVector time_vec(nt+1);
-    fluid_mass[0] = physics.compute_mass(mesh, solver.begin());
+    //fluid_mass[0] = physics.compute_mass(mesh, solver.begin());
     time_vec[0] = t0;
 
     // timestep the solution
@@ -182,77 +214,33 @@ try {
     for( int i=0; i<nt; i++ )
     {
         if (mpicomm->rank() == 0)
-            std::cout << "starting timestep at time " << nextTime-dt << "( " << solver.time() << ")" << std::endl;
+            std::cout << "\nstarting timestep at time " << nextTime-dt << "( " << solver.time() << ")" << std::endl;
 
         // advance the solution to nextTime
         solver.advance(nextTime);
 
         // save solution for output
         if(output_run){
-            solution.add( nextTime, solver.begin(), solver.end_ext() );
+            TVec sol(solver.solution());
+            solution.add( nextTime, sol );
             solution.write_timestep_VTK_XML( i+1, mesh, filename );
         }
-        fluid_mass[i+1] = physics.compute_mass(mesh, solver.begin());
+        //fluid_mass[i+1] = physics.compute_mass(mesh, solver.begin());
         time_vec[i+1] = nextTime;
         nextTime = t0 + (double)(i+2)*dt;
     }
     double finalTime = MPI_Wtime() - startTime;
-    if( mpicomm->rank()==0)
+    if( mpicomm->rank()==0){
         std::cout << std::endl << "Simulation took : " << finalTime << " seconds" << std::endl;
-    if( mpicomm->size()==1)
-    {
-        if(false){
-            std::ofstream ICFile;
-            ICFile.open( "ICvs.txt" );
-            assert( ICFile );
-            ICFile.precision(10);
-            ICFile << mesh.nodes() << std::endl;
-            for(int i=0; i<mesh.nodes(); i++)
-                ICFile << solver.begin()[i].h << std::endl;
-            ICFile.close();
-        }
-
-        // open file for output of stats
-        std::ofstream mfid;
-        std::string mfile_name;
-        std::string runname("run");
-        mfile_name = filename + ".m";
-        mfid.open(mfile_name.c_str());
-        assert( mfid );
-
-        // output basic stats to file
-        mfid << "maxOrder = " << maxOrder << ";" << std::endl;
-
-        // perform mass-balance caluclations
-        double flux_per_time = physics.mass_flux_per_time(mesh);
-        mfid << "massError_" << runname  << " = [ ";
-        for( int i=1; i<nt+1; i++ ){
-            double time_elapsed = time_vec[i]-time_vec[0];
-            double mass_balance = fluid_mass[i] - fluid_mass[0];
-            double mass_error = fabs(mass_balance - time_elapsed*flux_per_time)/fluid_mass[i];
-            mfid <<  mass_error << " ";
-        }
-        mfid << "];" << std::endl;
-        // output step orders
-        const std::vector<int>& orders = integrator.step_orders();
-        mfid << "orders_" << runname  << " = [";
-        for( int i=0; i<orders.size(); i++ )
-            mfid << orders[i] << " ";
-        mfid << "];" << std::endl;
-        // output step sizes
-        const std::vector<double>& sizes = integrator.step_sizes();
-        mfid << "stepSizes_" << runname  << " = [";
-        for( int i=0; i<sizes.size(); i++ )
-            mfid << sizes[i] << " ";
-        mfid << "];" << std::endl;
-        mfid << "Feval_" << runname  << " = " << physics.calls() << ";" << std::endl;
-        mfid.close();
+        std::cout << "Preconditioner : M " << preconditioner.time_M()
+                  << " J " << preconditioner.time_jacobian()
+                  << " apply " << preconditioner.time_apply()
+                  << std::endl;
+        std::cout << "time in Precond = " << preconditioner.time_apply()+preconditioner.time_compute()
+                  << "time elsewhere = " << finalTime - (preconditioner.time_apply()+preconditioner.time_compute())
+                  << std::endl;
     }
 
-    // output the solution to file
-    if(output_run && mpicomm->size()==1){
-        solution.write_to_file( filename + ".run" );
-    }
 
     // Output solver stats
     if (mpicomm->rank() == 0) {

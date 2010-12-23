@@ -143,162 +143,235 @@ ColumnPattern column_pattern(const mesh::Mesh& m, int blocksize)
 
 void Preconditioner::initialise(const mesh::Mesh& m)
 {
-    blocksize = block_traits<Physics::value_type>::blocksize;
-    N = m.local_nodes() * blocksize;
-    shift.resize(N);
+    blocksize_ = block_traits<Physics::value_type>::blocksize;
+    N_ = m.local_nodes() * blocksize_;
+    shift_ = TVecDevice(N_);
 
     // Create DSS data structure
     int opt = MKL_DSS_MSG_LVL_WARNING + MKL_DSS_TERM_LVL_ERROR;
-    int flag = dss_create(dss_handle, opt);
+    int flag = dss_create(dss_handle_, opt);
     assert(flag == MKL_DSS_SUCCESS);
 
     // Determine sparsity pattern
-    pat = column_pattern(m, blocksize);
-    colourvec = sequential_vertex_colouring(m, blocksize);
-    assert(colourvec.size() == N);
-    num_colours = *std::max_element(colourvec.begin(), colourvec.end()) + 1;
+    pat_ = column_pattern(m, blocksize_);
+    colourvec_ = sequential_vertex_colouring(m, blocksize_);
+    assert(colourvec_.size() == N_);
+    num_colours_ = *std::max_element(colourvec_.begin(), colourvec_.end()) + 1;
 
     // Create CSR row and column arrays
-    row_index.resize(N+1);
-    row_index[0] = 1;   // 1-based indexing
-    for (int i = 0; i < N; ++i) {
-        row_index[i+1] = row_index[i] + pat[i].size();
-        for (int j = 0; j < pat[i].size(); ++j) {
-            columns.push_back(pat[i][j] + 1);   // 1-based indexing
+    row_index_.resize(N_+1);
+    row_index_[0] = 1;   // 1-based indexing
+    for (int i = 0; i < N_; ++i) {
+        row_index_[i+1] = row_index_[i] + pat_[i].size();
+        for (int j = 0; j < pat_[i].size(); ++j) {
+            columns_.push_back(pat_[i][j] + 1);   // 1-based indexing
         }
     }
-    nnz = columns.size();
-    values.resize(nnz);
+    nnz_ = columns_.size();
+    values_ = TVecHost(nnz_, lin::row_oriented);
+
+    ////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////
+
+    // store lists of the columns associated with each colour
+    std::vector<std::vector<int> > colour_p_vec;
+    colour_p_vec.resize(num_colours_);
+    for(int i=0; i<N_; i++ )
+        colour_p_vec[colourvec_[i]].push_back(i);
+
+    std::cerr << "There are " << num_colours_ << " colours" << std::endl;
+
+    // copy the lists into minlin vectors
+    colour_p_.resize(num_colours_);
+    for(int i=0; i<num_colours_; i++)
+        colour_p_[i] = TVecHostIndex( colour_p_vec[i].begin(),
+                                      colour_p_vec[i].end() );
+
+    // build an index vector that maps the position of nonzeros in the matrix
+    // computed by colour-column to the compressed row storage
+    std::vector< std::map<int, int> > CSR_pattern(N_);
+    std::vector< int > nnz_per_colour(num_colours_, 0);
+    int k=0;
+    for(int colour=0; colour<num_colours_; colour++){
+        for(int kk=0; kk<colour_p_[colour].size(); kk++){
+            int j=colour_p_[colour][kk];
+            for (int i = 0; i < pat_[j].size(); ++i) {
+                int row = pat_[j][i];
+                CSR_pattern[row].insert(std::make_pair(j, k++));
+                nnz_per_colour[colour]++;
+            }
+        }
+    }
+    k=0;
+    TVecHostIndex matrix_p(nnz_); 
+    for (int i = 0; i < N_; ++i) {
+        std::map<int, int>::iterator it = CSR_pattern[i].begin();
+        std::map<int, int>::iterator end = CSR_pattern[i].end();
+        for(; it != end; ++it) {
+            matrix_p[k] = it->second;
+            k++;
+        }
+    }
+    // copy permutation to device
+    matrix_p_ = matrix_p;
+
+    // build an index that maps the entries in each residual into the relevant
+    // part of the jacobian
+    std::vector<TVecHostIndex> res_p;
+    res_p.resize(num_colours_);
+    res_p_.resize(num_colours_);
+
+    std::vector<TVecHostIndex> shift_p;
+    shift_p.resize(num_colours_);
+    shift_p_.resize(num_colours_);
+
+    for(int colour=0; colour<num_colours_; colour++){
+        int kk=0;
+        int n = colour_p_vec[colour].size();
+        res_p[colour] = TVecHostIndex(nnz_per_colour[colour]);
+        shift_p[colour] = TVecHostIndex(nnz_per_colour[colour]);
+        for(int k=0; k<n; k++){
+            int j=colour_p_vec[colour][k];
+            for(int i=0; i<pat_[j].size(); i++, kk++){
+                int row = pat_[j][i];
+                res_p[colour][kk] = row;
+                shift_p[colour][kk] = j;
+            }
+        }
+        res_p_[colour] = res_p[colour];
+        shift_p_[colour] = shift_p[colour];
+    }
+    
+    // make the colour_dist_ vector
+    colour_dist_ = TVecHostIndex(num_colours_+1, 0);
+    for(int colour=0; colour<num_colours_; colour++)
+        colour_dist_[colour+1] = colour_dist_[colour] + nnz_per_colour[colour];
+    ////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////
 
     // Define DSS matrix structure
     opt = MKL_DSS_SYMMETRIC_STRUCTURE;
     flag = dss_define_structure(
-        dss_handle, opt, &row_index[0], N, N, &columns[0], nnz);
+        dss_handle_, opt, &row_index_[0], N_, N_, &columns_[0], nnz_);
     assert(flag == MKL_DSS_SUCCESS);
 
     // Reorder DSS matrix
     opt = MKL_DSS_AUTO_ORDER;
-    flag = dss_reorder(dss_handle, opt, 0);
+    flag = dss_reorder(dss_handle_, opt, 0);
     assert(flag == MKL_DSS_SUCCESS);
 }
 
 int Preconditioner::setup(
     const mesh::Mesh& m, double tt, double c, double h,
-    const_iterator residual, const_iterator weights,
-    iterator sol, iterator derivative,
-    iterator temp1, iterator temp2, iterator temp3,
+    const TVecDevice &residual, const TVecDevice &weights,
+    TVecDevice &sol, TVecDevice &derivative,
+    TVecDevice &temp1, TVecDevice &temp2, TVecDevice &temp3,
     Callback compute_residual)
 {
-    ++num_setups;
+    ++num_setups_;
 
-    if (pat.size() == 0) initialise(m);
+    if (pat_.size() == 0) initialise(m);
 
     util::Timer timer;
 
+    timer.tic();
+
     // Save original values
-    std::copy(sol, sol + m.local_nodes(), temp1);
-    double* sol_vec   = reinterpret_cast<double*>(&temp1[0]);
+    temp1.at(lin::all) = sol;
+    TVecDevice sol_vec(sol.size(), temp1.data());
 
     // Save original derivatives
-    std::copy(derivative, derivative + m.local_nodes(), temp2);
-    double* derivative_vec = reinterpret_cast<double*>(&temp2[0]);
+    temp2.at(lin::all) = derivative;
+    TVecDevice derivative_vec(sol.size(), temp2.data());
 
     // Original residual
-    const double* res = reinterpret_cast<const double*>(&residual[0]);
+    TVecDevice res(sol.size(), const_cast<double*>(residual.data()) );
 
     // Shifted values, derivatives and residual
-    double* sol_shift = reinterpret_cast<double*>(&sol[0]);
-    double* derivative_shift = reinterpret_cast<double*>(&derivative[0]);
-    const double* shift_res = reinterpret_cast<const double*>(&temp3[0]);
+    TVecDevice sol_shift(sol.size(), sol.data());
+    TVecDevice derivative_shift(sol.size(), derivative.data());
+    TVecDevice shift_res(sol.size(), temp3.data());
 
     // Compute shift vector
-    const double* weightvec = reinterpret_cast<const double*>(&weights[0]);
+    timer.tic();
     double eps = std::sqrt(std::numeric_limits<double>::epsilon());
-    for (int j = 0; j < N; ++j) {
-        shift[j] = eps * std::max(
-            std::abs(sol_vec[j]), std::max(
-            std::abs(h*derivative_vec[j]),
-            1.0 / weightvec[j]
-        ));
+    if( CoordTraits<CoordDevice>::is_device() ){
+        lin::gpu::make_weights_vector(shift_.data(), sol_vec.data(), derivative_vec.data(), weights.data(), eps, h, N_);
+    }else{
+        for (int j = 0; j < N_; ++j) {
+            shift_[j] = eps * std::max(
+                std::abs(sol_vec[j]), std::max(
+                std::abs(h*derivative_vec[j]),
+                1.0 / weights[j]
+            ));
+        }
     }
 
-    // A CSR sparse matrix used to assemble the nonzero values
-    std::vector< std::map<int, double> > CSR_matrix(N);
-
-    timer.tic();
     // Process sets of independent columns
-    for (int colour = 0; colour < num_colours; ++colour) {
+
+    // manually allocate this vector's memory using page locked memory
+    // and refer the vector to the memory
+    // probably could be a member of the preconditioner class
+    TVecHost values_temp(nnz_, lin::row_oriented);
+    for (int colour = 0; colour < num_colours_; ++colour) {
+        TVecDevice colour_shift(colour_p_[colour].size());
+        colour_shift.at(lin::all) = shift_.at(colour_p_[colour]);
 
         // Shift each column or not, depending on its colour
-        for (int j = 0; j < N; ++j) {
-            if (colourvec[j] == colour) {
-                sol_shift[j] = sol_vec[j] + shift[j];
-                derivative_shift[j] = derivative_vec[j] + c * shift[j];
-            } else {
-                sol_shift[j] = sol_vec[j];
-                derivative_shift[j] = derivative_vec[j];
-            }
-        }
+        sol_shift.at(lin::all) = sol_vec;
+        sol_shift.at(colour_p_[colour]) += colour_shift;
+        derivative_shift.at(lin::all) = derivative_vec;
+        derivative_shift.at(colour_p_[colour]) += c*colour_shift;
 
         // Compute shifted residual
         compute_residual(temp3, false);
-        ++num_callbacks;
+        ++num_callbacks_;
 
-        // Load the values into the CSR matrix
-        for (int j = 0; j < N; ++j) {
-            if (colourvec[j] == colour) {
-                for (int i = 0; i < pat[j].size(); ++i) {
-                    int row = pat[j][i];
-                    double value = (shift_res[row] - res[row]) / shift[j];
-                    CSR_matrix[row].insert(std::make_pair(j, value));
-                }
-            }
-        }
-
+        // find shifted values
+        // copy over in the same operation
+        TVecDevice r(res_p_[colour].size());
+        r.at(lin::all) = res.at(res_p_[colour]) - temp3.at(res_p_[colour]);
+        r.at(lin::all) /= shift_.at(shift_p_[colour]);
+        values_temp.at(colour_dist_[colour], colour_dist_[colour+1]-1) = r;
     }
-    double timeF = timer.toc();
-
-    // Copy over CSR matrix into DSS array
-    int p = 0;
-    for (int i = 0; i < N; ++i) {
-        std::map<int, double>::iterator it = CSR_matrix[i].begin();
-        std::map<int, double>::iterator end = CSR_matrix[i].end();
-        for(; it != end; ++it) {
-            assert(columns[p] == it->first + 1);    // 1-based indexing
-            values[p] = it->second;
-            ++p;
-        }
-    }
-
-    // Factorise
+    values_.at(lin::all) = values_temp.at(matrix_p_); 
+    time_J_ += timer.toc();
+   
     timer.tic();
     int opt = MKL_DSS_INDEFINITE;
-    int flag = dss_factor_real(dss_handle, opt, &values[0]);
+    int flag = dss_factor_real(dss_handle_, opt, values_.data());
     assert(flag == MKL_DSS_SUCCESS);
+    time_M_ += timer.toc();
 
-    double timeLU = timer.toc();
-    std::cerr << "preconditioner took (" << timeF << " " << timeLU << " seconds" << std::endl;
     return 0;
 }
 
 int Preconditioner::apply(
     const mesh::Mesh& m,
     double t, double c, double h, double delta,
-    const_iterator residual, const_iterator weights,
-    const_iterator rhs,
-    iterator sol, iterator derivative,
-    iterator z, iterator temp,
+    const TVecDevice &residual, const TVecDevice &weights,
+    const TVecDevice &rhs,
+    TVecDevice &sol, TVecDevice &derivative,
+    TVecDevice &z, TVecDevice &temp,
     Callback compute_residual)
 {
-    ++num_applications;
-
-    const double* r = reinterpret_cast<const double*>(&rhs[0]);
-    double* zz = reinterpret_cast<double*>(&z[0]);
+    ++num_applications_;
+    util::Timer timer;
+    timer.tic();
 
     int nrhs = 1;
     int opt = MKL_DSS_REFINEMENT_OFF;
-    int flag = dss_solve_real(dss_handle, opt, r, nrhs, zz);
+    TVecHost Z(z.size());
+    TVecHost RHS(rhs);
+    //z.at(lin::all) = rhs;
+    int flag = dss_solve_real(dss_handle_, opt, RHS.data(), nrhs, Z.data());
     assert(flag == MKL_DSS_SUCCESS);
+    z.at(lin::all) = Z;
+
+    time_apply_ += timer.toc();
 
     return 0;
 }

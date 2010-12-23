@@ -19,19 +19,19 @@ namespace fvm {
 template<class Physics>
 class NoPreconditioner {
     NoPreconditioner();
+    typedef typename Physics::TVec TVec;
+    typedef typename Physics::TVecDevice TVecDevice;
 public:
     typedef typename Physics::value_type value_type;
     typedef typename fvm::Callback<Physics> Callback;
-    typedef typename fvm::Iterator<value_type>::type iterator;
-    typedef typename fvm::ConstIterator<value_type>::type const_iterator;
     int setup(const mesh::Mesh&, double, double, double,
-              const_iterator, const_iterator,
-              iterator, iterator, iterator, iterator, iterator, Callback)
+              const TVecDevice &,  const TVecDevice &,
+              TVecDevice &, TVecDevice &, TVecDevice &, TVecDevice &, TVecDevice &, Callback)
     { return 0; }
 
     int apply(const mesh::Mesh&, double, double, double, double,
-              const_iterator, const_iterator, const_iterator,
-              iterator, iterator, iterator, iterator, Callback)
+              const TVecDevice &, const TVecDevice &, const TVecDevice &,
+              TVecDevice &, TVecDevice &, TVecDevice &, TVecDevice &, Callback)
     { return 0; }
 };
 
@@ -42,16 +42,14 @@ public:
 
     typedef typename Physics::value_type value_type;
     typedef typename fvm::Callback<Physics> Callback;
-    typedef typename fvm::Iterator<value_type>::type iterator;
-    typedef typename fvm::ConstIterator<value_type>::type const_iterator;
+    typedef typename Physics::TVecDevice TVecDevice;
+    typedef typename Physics::TVec TVec;
 
-    //IDAIntegrator(const Mesh& mesh, double rtol, double atol);
-    //IDAIntegrator(const Mesh& mesh, Preconditioner& pc, double rtol, double atol);
     IDAIntegrator(const Mesh& mesh, Physics& ph, double rtol, double atol);
     IDAIntegrator(const Mesh& mesh, Physics& ph, Preconditioner& pc, double rtol, double atol);
     ~IDAIntegrator();
 
-    void initialise(double& t, iterator u, iterator up, Callback compute_residual);
+    void initialise(double& t, TVecDevice &u, TVecDevice &up, Callback compute_residual);
 
     const Mesh& mesh() const;
     Preconditioner& preconditioner();
@@ -75,8 +73,8 @@ public:
     void set_max_order(int);
     double max_timestep() const;
     int max_order() const;
-    void set_algebraic_variables(const std::vector<double> &vals);
-    void compute_initial_conditions(iterator u0, iterator up0);
+    void set_algebraic_variables(const TVec &vals);
+    void compute_initial_conditions(TVecDevice &u0, TVecDevice &up0);
 
     // return pointer to the step orders
     const std::vector<int>& step_orders() const{
@@ -100,8 +98,6 @@ private:
     Preconditioner* pc;
     mpi::MPICommPtr procinfo;
     Callback compute_residual;
-    iterator u;
-    iterator up;
     double* t;
     void* ida_mem;
     double rtol;
@@ -116,12 +112,23 @@ private:
     N_Vector uinterp;
     N_Vector upinterp;
     N_Vector variableids; // specify algebraic/differential variables
+    TVecDevice u;
+    TVecDevice up;
+    TVecDevice ulocal_store;
+    TVecDevice uplocal_store;
+    TVecDevice weights_store;
+    TVecDevice variableids_store;
+    TVecDevice atolv_store;
+    TVecDevice upinterp_store;
+    TVecDevice uinterp_store;
 
     std::vector<int> step_orders_;
     std::vector<double> step_sizes_;
     static const int variables_per_node = VariableTraits<value_type>::number;
 
-    void copy_vector(N_Vector y, iterator w);
+    // DEVICE
+    //void copy_vector(N_Vector y, iterator w);
+    void copy_vector(N_Vector y, TVecDevice &w);
 
     // IDA residual function
     static int f(double t,
@@ -145,17 +152,6 @@ private:
 
 };
 
-/*
-template<class Physics, class Preconditioner>
-IDAIntegrator<Physics, Preconditioner>::
-IDAIntegrator(const Mesh& mesh, double rtol, double atol)
-    : m(mesh), pc(), t(), ida_mem(), rtol(rtol), atol(atol) {}
-
-template<class Physics, class Preconditioner>
-IDAIntegrator<Physics, Preconditioner>::
-IDAIntegrator(const Mesh& mesh, Preconditioner& pc, double rtol, double atol)
-    : m(mesh), pc(&pc), t(), ida_mem(), rtol(rtol), atol(atol) {}
-*/
 template<class Physics, class Preconditioner>
 IDAIntegrator<Physics, Preconditioner>::
 IDAIntegrator(const Mesh& mesh, Physics& physics, double rtol, double atol)
@@ -172,77 +168,66 @@ IDAIntegrator(const Mesh& mesh, Physics& physics, Preconditioner& pc, double rto
 
 template<class Physics, class Preconditioner>
 void IDAIntegrator<Physics, Preconditioner>::
-initialise(double& tt, iterator y, iterator yp, Callback callback)
+initialise(double& tt, TVecDevice &y, TVecDevice &yp, Callback callback)
 {
     *procinfo << "\tIDAIntegrator<Physics, Preconditioner>::initialise()" << std::endl;
     t = &tt;
-    u = y;
-    up = yp;
+
+    int localSize = mesh().local_nodes()*variables_per_node;
+    int globalSize = mesh().global_nodes()*variables_per_node;
+
+    u = TVecDevice(mesh().nodes()*variables_per_node, y.data());
+    up = TVecDevice(mesh().nodes()*variables_per_node, yp.data());
     compute_residual = callback;
 
-    // Initialise solution vector
-    ulocal = N_VNew_Parallel(
-        procinfo->communicator(),
-        mesh().local_nodes() * variables_per_node,
-        mesh().global_nodes() * variables_per_node);
+    // Initialise solution vectors
+    // initialise with the passed values
+    ulocal_store  = TVecDevice(localSize);
+    uplocal_store = TVecDevice(localSize);
+    ulocal_store.at(lin::all)  = u.at(0,localSize-1);
+    uplocal_store.at(lin::all) = up.at(0,localSize-1);
+    ulocal = N_VNewEmpty_Parallel( procinfo->communicator(),
+                                     localSize, globalSize);
     assert(ulocal);
-    value_type* uvec = reinterpret_cast<value_type*>(NV_DATA_P(ulocal));
-    // DEVICE
-    // need to use minlin to make this transfer
-    // and others like it below
-    std::copy(&u[0], &u[0] + mesh().local_nodes(), uvec);
-
-    // Initialise derivative vector
-    uplocal = N_VNew_Parallel(
-        procinfo->communicator(),
-        mesh().local_nodes() * variables_per_node,
-        mesh().global_nodes() * variables_per_node);
+    uplocal = N_VNewEmpty_Parallel( procinfo->communicator(),
+                                     localSize, globalSize);
     assert(uplocal);
-    value_type* upvec = reinterpret_cast<value_type*>(NV_DATA_P(uplocal));
-    std::copy(&up[0], &up[0] + mesh().local_nodes(), upvec);
+    N_VSetArrayPointer_Parallel(ulocal_store.data(), ulocal);
+    N_VSetArrayPointer_Parallel(uplocal_store.data(), uplocal);
 
     // Initialise interpolation vectors used when interpolation is performed
     // on output from IDA, so as not to overwrite previously calculated solutions
-    uinterp = N_VNew_Parallel(
-        procinfo->communicator(),
-        mesh().local_nodes() * variables_per_node,
-        mesh().global_nodes() * variables_per_node);
-    assert(ulocal);
-    upinterp = N_VNew_Parallel(
-        procinfo->communicator(),
-        mesh().local_nodes() * variables_per_node,
-        mesh().global_nodes() * variables_per_node);
-    assert(uplocal);
+    uinterp = N_VNewEmpty_Parallel( procinfo->communicator(),
+                                    localSize, globalSize );
+    assert(uinterp);
+    upinterp = N_VNewEmpty_Parallel( procinfo->communicator(),
+                                     localSize, globalSize );
+    assert(upinterp);
+    // point the output of the interpolation to go directly
+    // into u and up
+    N_VSetArrayPointer_Parallel(u.data(), uinterp);
+    N_VSetArrayPointer_Parallel(up.data(), upinterp);
 
     // Initialise weights vector
-    // DEVICE
-    // we could crate minlin vectors based on a communicator,
-    // then declare weights as N_VNewEmpty_Parrallel
-    // and attach it to the minlin vector using
-    // N_VSetArrayPointer_Parallel(minlin_vec.data(), weights)
-    // and do similarly for the vectors below
-    weights = N_VNew_Parallel(
-        procinfo->communicator(),
-        mesh().local_nodes() * variables_per_node,
-        mesh().global_nodes() * variables_per_node);
+    weights = N_VNewEmpty_Parallel( procinfo->communicator(),
+                                    localSize, globalSize );
     assert(weights);
+    weights_store = TVecDevice(localSize);
+    N_VSetArrayPointer_Parallel(weights_store.data(), weights);
 
     // Initialise absolute tolerances vector
-    atolv = N_VNew_Parallel(
-        procinfo->communicator(),
-        mesh().local_nodes() * variables_per_node,
-        mesh().global_nodes() * variables_per_node);
+    atolv = N_VNewEmpty_Parallel( procinfo->communicator(),
+                                  localSize, globalSize );
     assert(atolv);
-    std::fill_n(
-        NV_DATA_P(atolv),
-        mesh().local_nodes() * variables_per_node,
-        atol);
+    atolv_store = TVecDevice(localSize, atol);
+    N_VSetArrayPointer_Parallel(atolv_store.data(), atolv);
 
-    variableids = N_VNew_Parallel(
-        procinfo->communicator(),
-        mesh().local_nodes() * variables_per_node,
-        mesh().global_nodes() * variables_per_node);
+    // vector for tagging algebraic and differential variables
+    variableids = N_VNewEmpty_Parallel( procinfo->communicator(),
+                                        localSize, globalSize );
     assert(variableids);
+    variableids_store = TVecDevice(localSize);
+    N_VSetArrayPointer_Parallel(variableids_store.data(), variableids);
 
     // Create IDA data structure
     ida_mem = IDACreate();
@@ -251,7 +236,7 @@ initialise(double& tt, iterator y, iterator yp, Callback callback)
     // Initialise IDA internal memory
     int flag = IDAInit(
         ida_mem,
-        reinterpret_cast<IDAResFn>(f),   // [1]
+        reinterpret_cast<IDAResFn>(f),
         tt, ulocal, uplocal);
     assert(flag == IDA_SUCCESS);
 
@@ -273,8 +258,8 @@ initialise(double& tt, iterator y, iterator yp, Callback callback)
     if (pc) {
         flag = IDASpilsSetPreconditioner(
             ida_mem,
-            reinterpret_cast<IDASpilsPrecSetupFn>(psetup),   // [1]
-            reinterpret_cast<IDASpilsPrecSolveFn>(psolve)    // [1]
+            reinterpret_cast<IDASpilsPrecSetupFn>(psetup),
+            reinterpret_cast<IDASpilsPrecSolveFn>(psolve)
         );
         assert(flag == IDA_SUCCESS);
     }
@@ -309,15 +294,23 @@ Preconditioner& IDAIntegrator<Physics, Preconditioner>::preconditioner() {
 // Advances solution by one internal timestep
 template<class Physics, class Preconditioner>
 void IDAIntegrator<Physics, Preconditioner>::advance() {
-    // DEVICE
-    // the interface could be changed so that u and up
-    // are references to minlin vectors
+
+    // we copy ulocal into u because the ulocal contains the current
+    // solution value inside IDA, whereas u and up may contain a version
+    // of the solution that was interpolated backwards
+    // make this copy to ensure that up to date values are used for calculating
+    // preprocess_timestep()
+    u.at(0,mesh().local_nodes()-1) = ulocal_store;
+    up.at(0,mesh().local_nodes()-1) = uplocal_store;
+
     physics.preprocess_timestep( *t, m, u, up );
-    int flag = IDASolve(
-        ida_mem, 1.0, t, ulocal, uplocal, IDA_ONE_STEP);
+
+    int flag = IDASolve( ida_mem, 1.0, t, ulocal, uplocal, IDA_ONE_STEP);
     assert(flag == IDA_SUCCESS);
+
     if( procinfo->rank()==0 )
-        std::cout << ".";
+        std::cerr << ".";
+
     // save the order and size of last step just completed
     int order_last;
     flag = IDAGetLastOrder(ida_mem, &order_last);
@@ -325,53 +318,25 @@ void IDAIntegrator<Physics, Preconditioner>::advance() {
     double step_last;
     flag = IDAGetLastStep(ida_mem, &step_last);
     step_sizes_.push_back(step_last);
-
-    // DEVICE
-    // if we use minlin vectors that are attached to empty NVector types we
-    // don't have to make copies like this because IDA would make changes
-    // to the vector itself.
-    copy_vector(ulocal, u);
-    copy_vector(uplocal, up);
 }
 
 // Advances solution to the specified time
 template<class Physics, class Preconditioner>
 void IDAIntegrator<Physics, Preconditioner>::advance(double next_time) {
 
-    /*
-    value_type* v = reinterpret_cast<value_type*>(NV_DATA_P(ulocal));
-    std::copy(&v[0], &v[0]+mesh().local_nodes(), &u[0]);
-    v = reinterpret_cast<value_type*>(NV_DATA_P(uplocal));
-    std::copy(&v[0], &v[0]+mesh().local_nodes(), &up[0]);
-    */
-    copy_vector(ulocal, u);
-    copy_vector(uplocal, up);
-
     // advance the solution to next_time
     while( (*t)<next_time )
         advance();
 
-    // interpolate the solution backwards
+    // Get IDA to interpolate the solution backwards from t to next_time
+    // this doesn't change the internal state of IDA, it is simply
+    // to ensure that the solution returned to the user is that at the
+    // requested time.
+    // The vector uinterp and upinterp are pointed directly into u
     int flag = IDAGetDky( ida_mem, next_time, 0, uinterp );
     assert(flag == IDA_SUCCESS);
     flag = IDAGetDky( ida_mem, next_time, 1, upinterp );
     assert(flag == IDA_SUCCESS);
-
-    // copy solution for external reference
-    copy_vector(uinterp, u);
-    copy_vector(upinterp, up);
-}
-
-template<class Physics, class Preconditioner>
-void IDAIntegrator<Physics, Preconditioner>::
-copy_vector(N_Vector y, iterator w) {
-    assert(NV_GLOBLENGTH_P(y) == mesh().global_nodes() * variables_per_node);
-    assert(NV_LOCLENGTH_P(y)  == mesh().local_nodes()  * variables_per_node);
-    std::copy(
-        reinterpret_cast<value_type*>(NV_DATA_P(y)),
-        reinterpret_cast<value_type*>(NV_DATA_P(y)) + mesh().local_nodes(),
-        w
-    );
 }
 
 // Returns the absolute tolerance
@@ -381,8 +346,7 @@ IDAIntegrator<Physics, Preconditioner>::abstol(int i)
 {
     assert(ida_mem);
     assert(i >= 0 && i < mesh().local_nodes());
-    value_type* avec = reinterpret_cast<value_type*>(NV_DATA_P(atolv));
-    return avec[i];
+    return atolv_store[i];
 }
 
 template<class Physics, class Preconditioner>
@@ -390,9 +354,7 @@ typename IDAIntegrator<Physics, Preconditioner>::value_type
 IDAIntegrator<Physics, Preconditioner>::abstol(int i) const
 {
     assert(ida_mem);
-    assert(i >= 0 && i < mesh().local_nodes());
-    const value_type* avec = reinterpret_cast<const value_type*>(NV_DATA_P(atolv));
-    return avec[i];
+    return atolv_store[i];
 }
 
 // Returns the relative tolerance
@@ -419,15 +381,19 @@ void IDAIntegrator<Physics, Preconditioner>::set_tolerances() {
 // vals[i]=0. -> variable i is algebraic
 // vals[i]=1. -> variable i is differntial
 template<class Physics, class Preconditioner>
-void IDAIntegrator<Physics, Preconditioner>::set_algebraic_variables(const std::vector<double> &vals){
+// DEVICE
+//void IDAIntegrator<Physics, Preconditioner>::set_algebraic_variables(const std::vector<double> &vals){
+void IDAIntegrator<Physics, Preconditioner>::set_algebraic_variables(const TVec &vals){
     // sanity check the input
     assert(vals.size()==variables_per_node*m.local_nodes());
     for(int i=0; i<vals.size(); i++)
         assert(vals[i]==0. || vals[i]==1.);
 
+    // DEVICE
     // copy user specified variable ids into NV_Vector
-    double* dest = reinterpret_cast<double*>(NV_DATA_P(variableids));
-    std::copy(vals.begin(), vals.end(), dest);
+    //double* dest = reinterpret_cast<double*>(NV_DATA_P(variableids));
+    //std::copy(vals.begin(), vals.end(), dest);
+    variableids_store = vals;
     // call IDA to set the ids
     int flag = IDASetId(ida_mem, variableids);
     assert(flag == IDA_SUCCESS);
@@ -439,7 +405,7 @@ void IDAIntegrator<Physics, Preconditioner>::set_algebraic_variables(const std::
 // will attempt to find derivatives for the differential variabels
 // and values for the algebraic variables
 template<class Physics, class Preconditioner>
-void IDAIntegrator<Physics, Preconditioner>::compute_initial_conditions(iterator u0, iterator up0){
+void IDAIntegrator<Physics, Preconditioner>::compute_initial_conditions(TVecDevice &u0, TVecDevice &up0){
     int icopt = IDA_Y_INIT;
     if(variableids_set_){
         icopt = IDA_YA_YDP_INIT;
@@ -448,58 +414,29 @@ void IDAIntegrator<Physics, Preconditioner>::compute_initial_conditions(iterator
     int flag = IDACalcIC(ida_mem, icopt, (*t)+1.);
     assert(flag==IDA_SUCCESS);
 
+    // DEVICE
     // get the initial conditions
     N_Vector yy0_mod, yp0_mod;
-    yy0_mod = N_VNew_Parallel(
+    //yy0_mod = N_VNew_Parallel(
+    yy0_mod = N_VNewEmpty_Parallel(
         procinfo->communicator(),
         mesh().local_nodes() * variables_per_node,
         mesh().global_nodes() * variables_per_node);
     assert(yy0_mod);
-    yp0_mod = N_VNew_Parallel(
+    N_VSetArrayPointer_Parallel(u0.data(), yy0_mod);
+
+    //yp0_mod = N_VNew_Parallel(
+    yp0_mod = N_VNewEmpty_Parallel(
         procinfo->communicator(),
         mesh().local_nodes() * variables_per_node,
         mesh().global_nodes() * variables_per_node);
     assert(yp0_mod);
+    N_VSetArrayPointer_Parallel(up0.data(), yp0_mod);
 
     flag = IDAGetConsistentIC(ida_mem, yy0_mod, yp0_mod);
-    // output to file
+    // DEVICE
+    // no need for copy
     /*
-    std::ofstream fid("IC.m");
-    value_type* temp = reinterpret_cast<value_type*>(NV_DATA_P(yy0_mod));
-    // h0
-    fid << "h0 = [" << temp[0].h;
-    for(int i=1; i<mesh().local_nodes(); i++)
-        fid << ", " << temp[i].h;
-    fid << "];" << std::endl;
-    // c0
-    fid << "c0 = [" << temp[0].c;
-    for(int i=1; i<mesh().local_nodes(); i++)
-        fid << ", " << temp[i].c;
-    fid << "];" << std::endl;
-    temp = reinterpret_cast<value_type*>(NV_DATA_P(yp0_mod));
-    // hp0
-    fid << "hp0 = [" << temp[0].h;
-    for(int i=1; i<mesh().local_nodes(); i++)
-        fid << ", " << temp[i].h;
-    fid << "];" << std::endl;
-    // cp0
-    fid << "cp0 = [" << temp[0].c;
-    for(int i=1; i<mesh().local_nodes(); i++)
-        fid << ", " << temp[i].c;
-    fid << "];" << std::endl;
-    // x
-    fid << "x = [" << mesh().node(0).point().x;
-    for(int i=1; i<mesh().local_nodes(); i++)
-        fid << ", " << mesh().node(i).point().x;
-    fid << "];" << std::endl;
-    // y
-    fid << "y = [" << mesh().node(0).point().y;
-    for(int i=1; i<mesh().local_nodes(); i++)
-        fid << ", " << mesh().node(i).point().y;
-    fid << "];" << std::endl;
-    fid.close();
-    */
-
     std::copy(
         reinterpret_cast<value_type*>(NV_DATA_P(yy0_mod)),
         reinterpret_cast<value_type*>(NV_DATA_P(yy0_mod)) + variables_per_node*mesh().local_nodes(),
@@ -510,6 +447,7 @@ void IDAIntegrator<Physics, Preconditioner>::compute_initial_conditions(iterator
         reinterpret_cast<value_type*>(NV_DATA_P(yp0_mod)) + variables_per_node*mesh().local_nodes(),
         up0
     );
+    */
 }
 
 // set the maximum timestep taken by IDA
@@ -535,6 +473,8 @@ void* IDAIntegrator<Physics, Preconditioner>::ida() {
     return ida_mem;
 }
 
+// DEVICE
+// it is a bit hard to see how this would work
 // (IDA)
 // Computes the residual function
 template<class Physics, class Preconditioner>
@@ -544,13 +484,19 @@ f(double t, N_Vector y, N_Vector yp, N_Vector res, void* ip)
     IDAIntegrator* integrator = static_cast<IDAIntegrator*>(ip);
 
     *integrator->t = t;
-    integrator->copy_vector(y,  integrator->u);
-    integrator->copy_vector(yp, integrator->up);
+
+    int N = NV_LOCLENGTH_P(y);
+    TVecDevice tmpu = TVecDevice(N, NV_DATA_P(y));
+    TVecDevice tmpup = TVecDevice(N, NV_DATA_P(yp));
+    integrator->u.at(0,N-1) = tmpu;
+    integrator->up.at(0,N-1) = tmpup;
+
+    TVecDevice r(N, NV_DATA_P(res));
 
     bool communicate = true;
-    value_type* r = reinterpret_cast<value_type*>(NV_DATA_P(res));
-    return integrator->compute_residual(
-        make_iterator<value_type>(r, r, r + integrator->m.local_nodes()), communicate);
+    int success = integrator->compute_residual(r, communicate);
+
+    return success;
 }
 
 // (IDA)
@@ -569,9 +515,6 @@ psetup(double tt, N_Vector y, N_Vector yp, N_Vector r,
 
     const mesh::Mesh& m = integrator->mesh();
 
-    iterator u = integrator->u;
-    iterator up = integrator->up;
-
     assert(NV_GLOBLENGTH_P(t1) == m.global_nodes() * variables_per_node);
     assert(NV_LOCLENGTH_P(t1) == m.local_nodes() * variables_per_node);
     assert(NV_GLOBLENGTH_P(t2) == m.global_nodes() * variables_per_node);
@@ -585,23 +528,22 @@ psetup(double tt, N_Vector y, N_Vector yp, N_Vector r,
     flag = IDAGetErrWeights(integrator->ida(), integrator->weights);
     assert(flag == 0);
 
-    const value_type* res = reinterpret_cast<const value_type*>(NV_DATA_P(r));
-    const value_type* w = reinterpret_cast<const value_type*>
-        (NV_DATA_P(integrator->weights));
-    value_type* temp1 = reinterpret_cast<value_type*>(NV_DATA_P(t1));
-    value_type* temp2 = reinterpret_cast<value_type*>(NV_DATA_P(t2));
-    value_type* temp3 = reinterpret_cast<value_type*>(NV_DATA_P(t3));
+    int N = NV_LOCLENGTH_P(r);
+    TVecDevice res(N, NV_DATA_P(r));
+    TVecDevice w(N, NV_DATA_P(integrator->weights));
+    TVecDevice temp1(N, NV_DATA_P(t1));
+    TVecDevice temp2(N, NV_DATA_P(t2));
+    TVecDevice temp3(N, NV_DATA_P(t3));
 
     int result = integrator->preconditioner().setup(
         m, tt, c, h,
-        make_iterator<const value_type>(res, res, res + m.local_nodes()),
-        make_iterator<const value_type>(w, w, w + m.local_nodes()),
-        u, up,
-//        make_iterator<value_type>(&u[0], &u[0], &u[0] + m.nodes()),
-//        make_iterator<value_type>(&up[0], &up[0], &up[0] + m.nodes()),
-        make_iterator<value_type>(temp1, temp1, temp1 + m.local_nodes()),
-        make_iterator<value_type>(temp2, temp2, temp2 + m.local_nodes()),
-        make_iterator<value_type>(temp3, temp3, temp3 + m.local_nodes()),
+        res,
+        w,
+        integrator->u,
+        integrator->up,
+        temp1,
+        temp2,
+        temp3,
         integrator->compute_residual
     );
 
@@ -621,9 +563,6 @@ psolve(double tt, N_Vector y, N_Vector yp, N_Vector r,
 
     const mesh::Mesh& m = integrator->mesh();
 
-    iterator u = integrator->u;
-    iterator up = integrator->up;
-
     assert(NV_GLOBLENGTH_P(tmp) == m.global_nodes() * variables_per_node);
     assert(NV_LOCLENGTH_P(tmp) == m.local_nodes() * variables_per_node);
 
@@ -633,25 +572,18 @@ psolve(double tt, N_Vector y, N_Vector yp, N_Vector r,
     flag = IDAGetErrWeights(integrator->ida(), integrator->weights);
     assert(flag == 0);
 
-    const value_type* res   = reinterpret_cast<const value_type*>(NV_DATA_P(r));
-    const value_type* w = reinterpret_cast<const value_type*>
-        (NV_DATA_P(integrator->weights));
-    value_type* rhs  = reinterpret_cast<value_type*>(NV_DATA_P(rr));
-    value_type* z    = reinterpret_cast<value_type*>(NV_DATA_P(zz));
-    value_type* temp = reinterpret_cast<value_type*>(NV_DATA_P(tmp));
+    int N = NV_LOCLENGTH_P(r);
+    TVecDevice res(N, NV_DATA_P(r));
+    TVecDevice w(N, NV_DATA_P(integrator->weights));
+    TVecDevice rhs(N, NV_DATA_P(rr));
+    TVecDevice z(N, NV_DATA_P(zz));
+    TVecDevice temp(N, NV_DATA_P(tmp));
 
-    std::copy(rhs, rhs + m.local_nodes(), z);
+    z.at(lin::all) = rhs;
 
     return integrator->preconditioner().apply(
         m, tt, c, h, delta,
-        make_iterator<const value_type>(res, res, res + m.local_nodes()),
-        make_iterator<const value_type>(w, w, w + m.local_nodes()),
-        make_iterator<const value_type>(rhs, rhs, rhs + m.local_nodes()),
-        u, up,
-//        make_iterator<value_type>(&u[0], &u[0], &u[0] + m.nodes()),
-//        make_iterator<value_type>(&up[0], &up[0], &up[0] + m.nodes()),
-        make_iterator<value_type>(z, z, z + m.local_nodes()),
-        make_iterator<value_type>(temp, temp, temp + m.local_nodes()),
+        res, w, rhs, integrator->u, integrator->up, z, temp,
         integrator->compute_residual
     );
 }

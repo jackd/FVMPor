@@ -1,7 +1,6 @@
 #ifndef COORDINATORS_H
 #define COORDINATORS_H
 
-//#include <lin/impl/rebind.h>
 #include <lin/coordinators/gpu/coordinator.h>
 #include <lin/lin.h>
 

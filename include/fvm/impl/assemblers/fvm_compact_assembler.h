@@ -22,15 +22,15 @@ public:
     typedef mesh::Mesh Mesh;
 
     typedef typename Physics::value_type value_type;
-    typedef typename Iterator<value_type>::type iterator;
-    typedef typename ConstIterator<value_type>::type const_iterator;
+    typedef typename Physics::TVecDevice TVecDevice;
 
     FVMAssembler(const Mesh& m, Physics& p);
     const Mesh& mesh() const;
     Physics& physics();
-    template<typename Iterator>
-    int compute_residual(
-        double time, const_iterator u, const_iterator up, Iterator res);
+    int compute_residual( double time,
+                          const TVecDevice &u,
+                          const TVecDevice &up,
+                          TVecDevice &res       );
 private:
     FVMAssembler(const FVMAssembler&);
     FVMAssembler& operator=(const FVMAssembler&);
@@ -60,9 +60,11 @@ Physics& FVMAssembler<Physics>::physics() {
 }
 
 template<class Physics>
-template<typename Iterator>
 int FVMAssembler<Physics>::compute_residual(
-    double time, const_iterator u, const_iterator up, Iterator res) {
+    double time, const TVecDevice &u, const TVecDevice &up, TVecDevice &res) {
+    //std::cerr << "==========================" << std::endl;
+    //std::cerr << "Assembler residual compute" << std::endl;
+    //std::cerr << "==========================" << std::endl;
 
     // Preprocess
     physics().preprocess_evaluation(time, mesh(), u, up);
@@ -70,8 +72,12 @@ int FVMAssembler<Physics>::compute_residual(
     // find the residual
     physics().residual_evaluation(time, mesh(), u, up, res);
 
+    //for(int i=0; i<mesh().local_nodes(); i++)
+    //    std::cerr << res[i] << ' ';
+    //std::cerr << std::endl;
+    
     // Postprocess
-    physics().postprocess_evaluation(time, mesh(), u, up);
+    //physics().postprocess_evaluation(time, mesh(), u, up);
 
     return 0;
 }

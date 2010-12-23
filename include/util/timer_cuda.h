@@ -10,8 +10,7 @@ namespace util{
     // timing function
     class TimerCuda{
         public:
-            TimerCuda() : recording_(false) {
-            };
+            TimerCuda() : recording_(false) {};
 
             // destructor
             // required for the case where a timer falls out of scope

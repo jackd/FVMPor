@@ -1,20 +1,16 @@
 #ifndef FVMPOR_ODE_H
 #define FVMPOR_ODE_H
 
+//#define USE_CUDA
+
 #include "fvmpor.h"
+#include <util/coordinators.h>
 #include <lin/lin.h>
 #include <lin/coordinators/gpu/coordinator.h>
 
 namespace fvmpor {
 
-template <typename T>
-struct CoordTraits{
-    static bool is_device() {return false;};
-};
-template <>
-struct CoordTraits<lin::gpu::Coordinator<int> >{
-    static bool is_device() {return true;};
-};
+using util::CoordTraits;
 
 struct Head{
     double h;
@@ -40,8 +36,11 @@ typedef lin::gpu::Coordinator<int> GPUCoord;
 
 typedef VarSatPhysics<Head, CPUCoord, GPUCoord> PhysicsGPU;
 typedef VarSatPhysics<Head, CPUCoord, CPUCoord> PhysicsCPU;
+#ifdef USE_CUDA
 typedef PhysicsGPU Physics;
-//typedef PhysicsCPU Physics;
+#else
+typedef PhysicsCPU Physics;
+#endif
 
 } // end namespace fvmpor
 

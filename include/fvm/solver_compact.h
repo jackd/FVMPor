@@ -20,8 +20,9 @@ public:
     typedef mesh::Mesh Mesh;
 
     typedef typename Physics::value_type value_type;
-    typedef typename Iterator<value_type>::type iterator;
-    typedef typename ConstIterator<value_type>::type const_iterator;
+    typedef typename Physics::TVec TVec;
+    typedef typename Physics::TVecDevice TVecDevice;
+    typedef typename Physics::TVecDevice::coordinator_type CoordDevice;
 
     // Constructor
     SolverBase(const Mesh& m, Physics& p, double t0);
@@ -35,15 +36,8 @@ public:
     // Returns a reference to the physics
     Physics& physics() const;
 
-    // Returns iterators that designate the value at the current time
-    const_iterator begin() const; // local nodes
-    const_iterator end() const; // local nodes
-    const_iterator end_ext() const; // local and external nodes
-
-    // Returns iterators that designate the derivative at the current time
-    const_iterator pbegin() const;// local nodes
-    const_iterator pend() const;// local nodes
-    const_iterator pend_ext() const;// local and external nodes
+    // returns a reference to the solution vector
+    const TVecDevice& solution() const;
 
 private:
     SolverBase(const SolverBase&);
@@ -52,23 +46,25 @@ private:
 protected:
     const mesh::Mesh& m;
     mpi::MPICommPtr mpicomm_;
-    mpi::Communicator<value_type> node_comm_;
+    mpi::Communicator<CoordDevice, value_type> node_comm_;
     int u_comm_tag_, up_comm_tag_;
     Physics& p;
     double t;
-    // DECIVE
+    // DEVICE
     // use minlin to store these vectors
-    std::vector<value_type> u;
-    std::vector<value_type> up;
-    std::vector<value_type> temp;
+    TVecDevice u;
+    TVecDevice up;
+    TVecDevice temp;
 
-    template<typename Iterator>
-    int compute_residual(Iterator it, bool communicate);
+    // DEVICE
+    // this wants to point to a minlin vector
+    int compute_residual(TVecDevice &y, bool communicate);
     friend class Callback<Physics>;
 };
 
 template<class Physics, class Integrator>
 class Solver : public SolverBase<Physics> {
+    typedef typename Physics::TVecDevice TVecDevice;
 public:
     typedef SolverBase<Physics> Base;
     typedef mesh::Mesh Mesh;
@@ -98,16 +94,16 @@ SolverBase<Physics>::SolverBase(const Mesh& m, Physics& p, double t0)
     mpicomm_ = m.mpicomm();
     node_comm_.set_pattern( "NP_Type", m.node_pattern() );
 
-    temp.resize(m.local_nodes());
-    up.resize(m.nodes());
-    u.resize(m.nodes());
-    u_comm_tag_ = node_comm_.vec_add(&u[0]);
-    up_comm_tag_ = node_comm_.vec_add(&up[0]);
+    temp = TVecDevice( m.local_nodes()*value_type::variables );
+    u = TVecDevice( m.nodes()*value_type::variables );
+    up = TVecDevice( m.nodes()*value_type::variables );
+
+    u_comm_tag_ = node_comm_.vec_add(u);
+    up_comm_tag_ = node_comm_.vec_add(up);
+
     physics().initialise(
         t, mesh(),
-        make_iterator<value_type>(&u[0], &u[0], &u[0] + mesh().local_nodes()),
-        make_iterator<value_type>(&up[0], &up[0], &up[0] + mesh().local_nodes()),
-        make_iterator<value_type>(&temp[0], &temp[0], &temp[0] + mesh().local_nodes()),
+        u, up, temp,
         Callback<Physics>(this)
     );
 }
@@ -118,30 +114,22 @@ Solver<Physics, Integrator>::Solver(const Mesh& m, Physics& p, Integrator& I, do
 {
     integrator().initialise(
         Base::t,
-        make_iterator<typename Base::value_type>(
-            &Base::u[0], &Base::u[0], &Base::u[0] + Base::mesh().nodes()),
-        make_iterator<typename Base::value_type>(
-            &Base::up[0], &Base::up[0], &Base::up[0] + Base::mesh().nodes()),
+        Base::u, Base::up,
         Callback<Physics>(this)
     );
 }
 
 template<class Physics>
-template<typename Iterator>
-int SolverBase<Physics>::compute_residual(Iterator res, bool communicate) {
-    // DEVICE
-    // this needs to change to reflect possible host-device transfers
+int SolverBase<Physics>::compute_residual(TVecDevice &res, bool communicate) {
+    util::Timer timer;
     if (communicate) {
         node_comm_.send(u_comm_tag_);
         node_comm_.send(up_comm_tag_);
         node_comm_.recv_all();
     }
-    return Assembler::compute_residual(
-        t,
-        make_iterator<const value_type>(&u[0], &u[0], &u[0] + mesh().nodes()),
-        make_iterator<const value_type>(&up[0], &up[0], &up[0] + mesh().nodes()),
-        res
-    );
+
+    int retval = Assembler::compute_residual( t, u, up, res );
+    return retval;
 }
 
 template<class Physics>
@@ -165,52 +153,15 @@ Integrator& Solver<Physics, Integrator>::integrator() const {
 }
 
 template<class Physics>
-typename SolverBase<Physics>::const_iterator
-SolverBase<Physics>::end_ext() const {
-    return make_iterator<const value_type>(
-        &u[0] + mesh().nodes(), &u[0], &u[0] + mesh().nodes());
+const typename Physics::TVecDevice&
+SolverBase<Physics>::solution() const {
+    return u;
 }
 
 template<class Physics>
-typename SolverBase<Physics>::const_iterator
-SolverBase<Physics>::begin() const {
-    return make_iterator<const value_type>(
-        &u[0], &u[0], &u[0] + mesh().local_nodes());
-}
-
-template<class Physics>
-typename SolverBase<Physics>::const_iterator
-SolverBase<Physics>::end() const {
-    return make_iterator<const value_type>(
-        &u[0] + mesh().local_nodes(), &u[0], &u[0] + mesh().local_nodes());
-}
-
-template<class Physics>
-typename SolverBase<Physics>::const_iterator
-SolverBase<Physics>::pbegin() const {
-    return make_iterator<const value_type>(
-        &up[0], &up[0], &up[0] + mesh().local_nodes());
-}
-
-template<class Physics>
-typename SolverBase<Physics>::const_iterator
-SolverBase<Physics>::pend() const {
-    return make_iterator<const value_type>(
-        &up[0] + mesh().local_nodes(), &up[0], &up[0] + mesh().local_nodes());
-}
-
-template<class Physics>
-typename SolverBase<Physics>::const_iterator
-SolverBase<Physics>::pend_ext() const {
-    return make_iterator<const value_type>(
-        &up[0] + mesh().nodes(), &up[0], &up[0] + mesh().nodes());
-}
-
-template<class Physics>
-template<typename Iterator>
-int Callback<Physics>::operator()(Iterator it, bool communicate) {
+int Callback<Physics>::operator()(TVecDevice &y, bool communicate) {
     assert(solver);
-    return solver->compute_residual(it, communicate);
+    return solver->compute_residual(y, communicate);
 }
 
 template<class Physics, class Integrator>

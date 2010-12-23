@@ -12,6 +12,8 @@
 #include <fvm/mesh.h>
 #include <util/streamstring.h>
 
+#include <lin/lin.h>
+
 namespace util {
 
 template<typename T>
@@ -27,11 +29,10 @@ template<typename TypeName>
 class Solution {
 public:
     Solution(mpi::MPICommPtr comm): mpicomm_(comm->duplicate("solution")) { };
-    typedef typename fvm::ConstIterator<TypeName>::type const_iterator;
-    typedef std::vector<TypeName> TypeVector;
+    typedef lin::Vector<double, lin::DefaultCoordinator<double> > TVec;
 
     int solutions( void ) const;
-    void add( double time, const_iterator b, const_iterator e );
+    void add( double time, TVec &sol);
     void write_to_file( std::string file_name ) const;
     void write_timestep_VTK( int ts, const mesh::Mesh &m, std::string file_name ) const;
     void write_timestep_VTK_XML( int ts, const mesh::Mesh &m, std::string file_name ) const;
@@ -39,7 +40,7 @@ public:
 private:
     mpi::MPICommPtr mpicomm_;
     std::vector<double> tvec;
-    std::vector<TypeVector> solvec;
+    std::vector<TVec> solvec;
 };
 
 template<typename TypeName>
@@ -48,10 +49,10 @@ int Solution<TypeName>::solutions( void ) const{
 }
 
 template<typename TypeName>
-void Solution<TypeName>::add( double time, const_iterator b, const_iterator e ){
+void Solution<TypeName>::add( double time, TVec &sol ){
     *mpicomm_ << "saving solution at time " << time << std::endl;
     tvec.push_back(time);
-    solvec.push_back( TypeVector(b,e) );
+    solvec.push_back( sol );
 }
 
 template<typename TypeName>
@@ -153,7 +154,7 @@ void Solution<TypeName>::write_timestep_VTK( int ts, const mesh::Mesh &m, std::s
     fid << "POINT_DATA " << m.nodes() << std::endl;
     fid << "SCALARS head float 1" << std::endl;
     fid << "LOOKUP_TABLE default" << std::endl;
-    const double *data = reinterpret_cast<const double*>(&solvec[ts][0]);
+    const double *data = reinterpret_cast<const double*>(solvec[ts].data());
     for(int i=0; i<m.nodes(); i++)
         fid << data[i*blocksize] << " ";
 
@@ -220,7 +221,7 @@ void Solution<TypeName>::write_timestep_VTK_XML( int ts, const mesh::Mesh &m, st
     // the computed solution data defined at points
     //////////////////////////////////////////////////////////////
     fid << "      <PointData Scalars=\"" <<  TypeName::var_name(0) << "\">" << std::endl;
-    const double *data = reinterpret_cast<const double*>(&solvec[ts][0]);
+    const double *data = reinterpret_cast<const double*>(solvec[ts].data());
     for( int var=0; var<blocksize; var++ ){
         // pressure head
         fid << "        <DataArray Name=\"" << TypeName::var_name(var) << "\" type=\"Float32\" format=\"ascii\">" << std::endl;

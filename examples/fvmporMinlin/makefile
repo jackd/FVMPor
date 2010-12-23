@@ -3,8 +3,10 @@ CC=icpc
 #CC=g++ -Wall -Wno-sign-compare -Wno-unused
 localOPTS=-DMPICH_IGNORE_CXX_SEEK -DUSE_MINLIN -DUSE_MKL
 debugOPTS=-g -O3
+#debugOPTS=-g -O3 -DLIN_VERBOSE -DUSE_CUDA
+#debugOPTS=-g -O3
 #debugOPTS=-g -O3 -openmp
-#debugOPTS=-g -O0 -DLIN_VERBOSE
+#debugOPTS=-g -O0 -DLIN_DEBUG
 #debugOPTS=-DMPICH_IGNORE_CXX_SEEK -DFVM_DEBUG -DMESH_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC -DVECTOR_DEBUG -DLIN_DEBUG -g -O0 -fno-inline -DLIN_DEBUG -DLIN_VERBOSE
 parmsOPTS=-DUSE_MPI -DREAL=double -DDBL -DHAS_BLAS -DFORTRAN_UNDERSCORE -DVOID_POINTER_SIZE_8
 RM=rm -f
@@ -23,8 +25,8 @@ LIBS=-L/opt/intel/impi/3.2/lib -L/opt/intel/Compiler/11.1/069/mkl/lib/32 -L/opt/
 endif
 
 #SUNDIALS=-lsundials_idas -lsundials_nvecparallel
-#SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel.a
-SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel_cuda.a
+SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel.a
+#SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel_cuda.a
 
 LIB=$(MKL) $(SUNDIALS) -lmpi -lpthread -lcublas -lcusparse -lcuda
 MESH=../../mesh.o
@@ -59,7 +61,7 @@ cassion: cassion.h fvmpor_ODE_impl.cpp $(IMPLEMENTATIONDEPS_ODE)
 	$(CC) $(OPTS) $(INCLUDE) $(LIBS) -o cassion fvmpor_ODE_impl.cpp -DPROBLEM_CASSION $(IMPLEMENTATIONDEPS_ODE) $(LIB)
 
 test: test.cpp
-	$(CC) $(OPTS) $(INCLUDE) $(LIBS) -o test test.cpp $(UTIL) $(LIB)
+	$(CC) $(OPTS) $(INCLUDE) $(LIBS) -o test test.cpp $(UTIL) $(LIB) $(MESH)
 
 cassionM: cassion.h fvmpor_DAE_impl.cpp $(IMPLEMENTATIONDEPS_DAE)
 	$(CC) $(OPTS) $(INCLUDE) $(LIBS) -o cassionM fvmpor_DAE_impl.cpp -DPROBLEM_CASSION $(IMPLEMENTATIONDEPS_DAE) $(LIB)

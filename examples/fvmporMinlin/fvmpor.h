@@ -245,11 +245,12 @@ public:
         double g = constants.g();
 
         if( beta ){
-            rho = h;
-            rho *= rho_0*rho_0*g*beta;
+            //rho.at(all) = h;
+            //rho *= rho_0*rho_0*g*beta;
+            rho.at(all) = (rho_0*rho_0*g*beta)*h;
             rho += rho_0;
         }else{
-            rho(all) = rho_0;
+            rho.at(all) = rho_0;
         }
     }
 
@@ -690,8 +691,9 @@ public:
         qdotn_faces.zero();
 
         // compute the vector quantity q at each internal CV face
-        qsat_faces_.x().at(all) = grad_h_faces_.x();
-        qsat_faces_.x() *= K_faces_.x();
+        //qsat_faces_.x().at(all) = grad_h_faces_.x();
+        //qsat_faces_.x() *= K_faces_.x();
+        qsat_faces_.x().at(all) = mul(grad_h_faces_.x(), K_faces_.x());
         qsat_faces_.y().at(all) = grad_h_faces_.y();
         if( m.dim()==2 ){
             qsat_faces_.y() += 1.;
@@ -711,7 +713,6 @@ public:
 
         // minlin needs to be updated to allow the following code to work:
         M_flux_faces.at(0,ifaces-1) = mul(rho_faces_lim, qdotn_faces.at(0,ifaces-1));
-        //M_flux_faces.at(0,ifaces-1) = mul(rho_faces_lim, qdotn_faces);
 
         // loop over boundary faces and find fluid flux where
         // explicitly given by BCs

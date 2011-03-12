@@ -20,8 +20,7 @@
 #include <lin/lin.h>
 #include <fvm/fvm.h>
 #include <fvm/mesh.h>
-//#include <fvm/solver.h>
-#include <fvm/solver_compact.h>
+#include <fvm/solver.h>
 #include <fvm/physics_base.h>
 
 #include <util/intvector.h>
@@ -711,8 +710,10 @@ public:
         }
         qdotn_faces.at(0,ifaces-1) *= krw_faces_lim;
 
-        // minlin needs to be updated to allow the following code to work:
-        M_flux_faces.at(0,ifaces-1) = mul(rho_faces_lim, qdotn_faces.at(0,ifaces-1));
+        // find the mass flux over each face by multiplying density by
+        // volumetric flux.
+        M_flux_faces.at(0,ifaces-1) = mul( rho_faces_lim,
+                                           qdotn_faces.at(0,ifaces-1) );
 
         // loop over boundary faces and find fluid flux where
         // explicitly given by BCs
@@ -725,23 +726,24 @@ public:
 
             int boundary_tag = cvf.boundary();
             const BoundaryCondition& BCh = boundary_condition_h( boundary_tag );
+            double area = cvf.area();
 
             switch( BCh.type() ){
                 // prescribed flux
                 case 3:
-                    qdotn_faces_bnd.at(i) = BCh.value(t) * cvf.area();
+                    qdotn_faces_bnd.at(i) = BCh.value(t) * area;
                     break;
                 // prescribed directional flux
                 case 6:
-                    qdotn_faces_bnd.at(i) = BCh.flux( t, cvf.normal() ) * cvf.area();
+                    qdotn_faces_bnd.at(i) = BCh.flux( t, cvf.normal() ) * area;
                     break;
                 // seepage
                 case 7:
-                    qdotn_faces_bnd.at(i) = BCh.value(t) * cvf.area();
+                    qdotn_faces_bnd.at(i) = BCh.value(t) * area;
                     break;
                 // seepage/hydrostatic shoreline
                 case 8:
-                    qdotn_faces_bnd.at(i) = 0. * cvf.area();
+                    qdotn_faces_bnd.at(i) = 0. * area;
                     break;
                 default:
                     break;

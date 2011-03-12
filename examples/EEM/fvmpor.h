@@ -20,8 +20,7 @@
 #include <lin/lin.h>
 #include <fvm/fvm.h>
 #include <fvm/mesh.h>
-//#include <fvm/solver.h>
-#include <fvm/solver_compact.h>
+#include <fvm/solver.h>
 #include <fvm/physics_base.h>
 
 #include <util/intvector.h>

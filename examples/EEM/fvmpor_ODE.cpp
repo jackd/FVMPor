@@ -21,54 +21,6 @@ template<typename T> std::string to_string(const T& t){
     return oss.str();
 }
 
-void print_ida_stats(void *ida_mem)
-{
-    long lenrw, leniw ;
-    long lenrwLS, leniwLS;
-    long nst, nfe, nsetups, nni, ncfn, netf;
-    long nli, npe, nps, ncfl, nfeLS;
-    int flag;
-
-    flag = IDAGetWorkSpace(ida_mem, &lenrw, &leniw);
-    assert(flag == 0);
-    flag = IDAGetNumSteps(ida_mem, &nst);
-    assert(flag == 0);
-    flag = IDAGetNumResEvals(ida_mem, &nfe);
-    assert(flag == 0);
-    flag = IDAGetNumLinSolvSetups(ida_mem, &nsetups);
-    assert(flag == 0);
-    flag = IDAGetNumErrTestFails(ida_mem, &netf);
-    assert(flag == 0);
-    flag = IDAGetNumNonlinSolvIters(ida_mem, &nni);
-    assert(flag == 0);
-    flag = IDAGetNumNonlinSolvConvFails(ida_mem, &ncfn);
-    assert(flag == 0);
-
-    flag = IDASpilsGetWorkSpace(ida_mem, &lenrwLS, &leniwLS);
-    assert(flag == 0);
-    flag = IDASpilsGetNumLinIters(ida_mem, &nli);
-    assert(flag == 0);
-    flag = IDASpilsGetNumPrecEvals(ida_mem, &npe);
-    assert(flag == 0);
-    flag = IDASpilsGetNumPrecSolves(ida_mem, &nps);
-    assert(flag == 0);
-    flag = IDASpilsGetNumConvFails(ida_mem, &ncfl);
-    assert(flag == 0);
-    flag = IDASpilsGetNumResEvals(ida_mem, &nfeLS);
-    assert(flag == 0);
-
-    using std::printf;
-    fprintf(stdout, "\nFinal Statistics.. \n\n");
-    fprintf(stdout, "lenrw   = %5ld     leniw   = %5ld\n", lenrw, leniw);
-    fprintf(stdout, "lenrwLS = %5ld     leniwLS = %5ld\n", lenrwLS, leniwLS);
-    fprintf(stdout, "nst     = %5ld\n"                  , nst);
-    fprintf(stdout, "nfe     = %5ld     nfeLS   = %5ld\n"  , nfe, nfeLS);
-    fprintf(stdout, "nni     = %5ld     nli     = %5ld\n"  , nni, nli);
-    fprintf(stdout, "nsetups = %5ld     netf    = %5ld\n"  , nsetups, netf);
-    fprintf(stdout, "npe     = %5ld     nps     = %5ld\n"  , npe, nps);
-    fprintf(stdout, "ncfn    = %5ld     ncfl    = %5ld\n\n", ncfn, ncfl);
-}
-
 int main(int argc, char* argv[]) {
 
     const char* usage = " meshfile finalTime [outfile]\n";
@@ -169,7 +121,7 @@ try {
     if(maxTimestep>0.)
         integrator.set_max_timestep(maxTimestep);
 
-    *mpicomm << "set integrator max timestep (" << maxTimestep << ") and max order ("  << maxOrder <<  ")" << std::endl;
+    *mpicomm << "set integrator max timestep (" << maxTimestep << ")" << std::endl;
 
     std::string filename;
     bool output_run = false;
@@ -223,29 +175,12 @@ try {
     double finalTime = MPI_Wtime() - startTime;
     if( mpicomm->rank()==0){
         std::cout << std::endl << "Simulation took : " << finalTime << " seconds" << std::endl;
-        std::cout << "Preconditioner : M " << preconditioner.time_M()
-                  << " J " << preconditioner.time_jacobian()
-                  << " apply " << preconditioner.time_apply()
-                  << std::endl;
-        std::cout << "time in Precond = " << preconditioner.time_apply()+preconditioner.time_compute()
-                  << "time elsewhere = " << finalTime - (preconditioner.time_apply()+preconditioner.time_compute())
-                  << std::endl;
     }
-
 
     // Output solver stats
     if (mpicomm->rank() == 0) {
-        print_ida_stats(integrator.ida());
         std::cout << "Physics calls = "
                   << physics.calls() << std::endl;
-#ifdef PRECON
-        std::cout << "Preconditioner setups = "
-                  << preconditioner.setups() << std::endl;
-        std::cout << "Preconditioner callbacks = "
-                  << preconditioner.callbacks() << std::endl;
-        std::cout << "Preconditioner applications = "
-                  << preconditioner.applications() << std::endl;
-#endif
     }
 
 } catch (const std::exception& e) {

@@ -24,13 +24,17 @@ MKL=-lmkl_intel_threa
 LIBS=-L/opt/intel/impi/3.2/lib -L/opt/intel/Compiler/11.1/069/mkl/lib/32 -L/opt/intel/Compiler/11.1/069/lib/ia32 -L/home/cummingb/lib
 endif
 
-LIB=$(MKL) -lmpi -lpthread -lcublas -lcusparse -lcuda
+SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel.a
+#SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel_cuda.a
+
+LIB=$(MKL) $(SUNDIALS) -lmpi -lpthread -lcublas -lcusparse -lcuda
+#LIB=$(MKL) -lmpi -lpthread -lcublas -lcusparse -lcuda
 MESH=../../mesh.o
 UTIL=$(MINLIN)/cuda.o
 
 IMPLEMENTATIONDEPS_ODE=fvmpor_ODE.o fvmpor.o shape.o $(MESH) $(UTIL) $(PRECON)
 
-OPTS=$(localOPTS) $(debugOPTS) $(preconOPTS) -openmp
+OPTS=$(localOPTS) $(debugOPTS) -openmp
 
 # ...............
 # all
@@ -49,7 +53,7 @@ vs: vs.h fvmpor_ODE_impl.cpp $(IMPLEMENTATIONDEPS_ODE)
 # ............
 # Object files
 # ............
-fvmpor_ODE.o : fvmpor_ODE.h preconditioner_dss.h fvmpor_ODE.cpp
+fvmpor_ODE.o : fvmpor_ODE.h fvmpor_ODE.cpp
 	$(CC) $(OPTS) $(INCLUDE) -c fvmpor_ODE.cpp -o fvmpor_ODE.o
 
 fvmpor_ODE_impl.o : fvmpor_ODE.h fvmpor_ODE_impl.cpp fvmpor.h

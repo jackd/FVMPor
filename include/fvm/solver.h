@@ -3,7 +3,7 @@
 
 #include <fvm/fvm.h>
 #include <fvm/mesh.h>
-#include <fvm/impl/assemblers/fvm_compact_assembler.h>
+#include <fvm/impl/assemblers/fvm_assembler.h>
 #include <fvm/impl/communicators/communicator.h>
 
 #include <vector>

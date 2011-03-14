@@ -107,8 +107,8 @@ void Mesh::read_mesh_data(std::ifstream& infile, std::ifstream& propfile) {
     std::set<Edge> edgeset;
     std::set<Face> faceset;
     read_elements(infile, n_elements, edgeset, faceset);
-    //reorder_nodes_edges(edgeset, faceset);
-    populate_edges_and_faces(edgeset, faceset);
+    reorder_nodes_edges(edgeset, faceset);
+    //populate_edges_and_faces(edgeset, faceset);
     set_element_neighbours();
     face_edge_sanity_check();
     element_cvface_sanity_check();

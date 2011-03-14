@@ -169,6 +169,23 @@ void Preconditioner::initialise(const mesh::Mesh& m)
     }
     nnz_ = columns_.size();
     values_ = TVecHost(nnz_, lin::row_oriented);
+    
+    //////////////////////
+    //////////////////////
+    //////////////////////
+    int mi=100;
+    int ma=0;
+    for(int i=0; i<N_; i++){
+        int sz = row_index_[i+1] - row_index_[i];
+        if(sz < mi)
+            mi = sz;
+        if(sz > ma)
+            ma = sz;
+    }
+    std::cerr << "min, max, avg nnz per row of matrix are : " << mi << ", " << ma <<  ", " << (double)nnz_/(double)N_ << std::endl;
+    //////////////////////
+    //////////////////////
+    //////////////////////
 
     ////////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////
@@ -335,9 +352,15 @@ int Preconditioner::setup(
         TVecDevice r(res_p_[colour].size());
         r.at(lin::all) = res.at(res_p_[colour]) - temp3.at(res_p_[colour]);
         r.at(lin::all) /= shift_.at(shift_p_[colour]);
+        // copy to host performed here
         values_temp.at(colour_dist_[colour], colour_dist_[colour+1]-1) = r;
     }
+
+    // copy values to host
+    util::Timer timer_copy;
+    timer_copy.tic();
     values_.at(lin::all) = values_temp.at(matrix_p_); 
+    time_copy_ += timer_copy.toc();
     time_J_ += timer.toc();
    
     timer.tic();
@@ -359,19 +382,24 @@ int Preconditioner::apply(
     Callback compute_residual)
 {
     ++num_applications_;
-    util::Timer timer;
-    timer.tic();
+    util::Timer timer_apply;
+    util::Timer timer_copy;
+    timer_apply.tic();
 
     int nrhs = 1;
     int opt = MKL_DSS_REFINEMENT_OFF;
+
+    timer_copy.tic();
     TVecHost Z(z.size());
     TVecHost RHS(rhs);
+    time_copy_ += timer_copy.toc();
     //z.at(lin::all) = rhs;
     int flag = dss_solve_real(dss_handle_, opt, RHS.data(), nrhs, Z.data());
     assert(flag == MKL_DSS_SUCCESS);
+    timer_copy.tic();
     z.at(lin::all) = Z;
-
-    time_apply_ += timer.toc();
+    time_copy_ += timer_copy.toc();
+    time_apply_ += timer_apply.toc();
 
     return 0;
 }

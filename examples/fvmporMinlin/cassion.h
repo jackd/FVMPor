@@ -11,24 +11,26 @@ namespace fvmpor{
         //spatial_weighting = weightAveraging;
         //spatial_weighting = weightVanLeer;
 
+        TVec h_vec_host(m.local_nodes());
         for (int i = 0; i < m.local_nodes(); ++i) {
             const mesh::Node& n = m.node(i);
             Point p = n.point();
             double x = p.x;
             double el = dimension == 2 ? p.y : p.z;
-
+        
+            h_vec_host[i] = -7.34;
             if( is_dirichlet_h_vec_[i] ){
                 int tag = is_dirichlet_h_vec_[i];
-                if( boundary_condition_h(tag).type()==1 )
-                    h_vec[i] = boundary_condition_h(tag).value(t);
-                else
-                    h_vec[i] = boundary_condition_h(tag).hydrostatic(t,el);
-            } else{
-                //h_vec[i] = sin(el)+cos(x);
-                h_vec[i] = -7.34;
-                //h_vec[i] = -100.;
+                int type = boundary_condition_h(tag).type();
+                // dirichlet
+                if( type==1 ) 
+                    h_vec_host.at(i) = boundary_condition_h(tag).value(t);
+                // dirichlet hydrostatic
+                else if( type==4 )
+                    h_vec_host.at(i) = boundary_condition_h(tag).hydrostatic(t, el);
             }
         }
+        h_vec.at(0,h_vec_host.size()-1) = h_vec_host;
     }
 
     // set physical zones

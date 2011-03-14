@@ -42,17 +42,19 @@ public:
     int callbacks() const { return num_callbacks_; }
     int applications() const { return num_applications_; }
     double time_apply() {return time_apply_;};
+    double time_copy() {return time_copy_;};
     double time_compute() {return time_M_ + time_J_;};
     double time_jacobian() {return time_J_;};
     double time_M() {return time_M_;};
 
-    Preconditioner() : num_setups_(0), num_callbacks_(0), num_applications_(0), time_M_(0), time_J_(0), time_apply_(0) {}
+    Preconditioner() : num_setups_(0), num_callbacks_(0), num_applications_(0), time_M_(0), time_J_(0), time_apply_(0), time_copy_(0) {}
 
     void initialise(const mesh::Mesh& m);
 
 private:
     // universal to preconditioner implementations
     double time_apply_;
+    double time_copy_;
     double time_J_;
     double time_M_;
 

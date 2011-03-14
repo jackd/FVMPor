@@ -50,14 +50,10 @@ protected:
     int u_comm_tag_, up_comm_tag_;
     Physics& p;
     double t;
-    // DEVICE
-    // use minlin to store these vectors
     TVecDevice u;
     TVecDevice up;
     TVecDevice temp;
 
-    // DEVICE
-    // this wants to point to a minlin vector
     int compute_residual(TVecDevice &y, bool communicate);
     friend class Callback<Physics>;
 };
@@ -166,6 +162,10 @@ int Callback<Physics>::operator()(TVecDevice &y, bool communicate) {
 
 template<class Physics, class Integrator>
 void Solver<Physics, Integrator>::advance() {
+    // TODO :
+    // it might be a good idea to make the solver explicitly
+    // request the solution vector be returned from the integrator
+    // after advance()
     integrator().advance();
 
     Base::node_comm_.send(Base::u_comm_tag_);

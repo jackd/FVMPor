@@ -54,6 +54,23 @@ public:
             cusparseSetMatIndexBase(descra_, CUSPARSE_INDEX_BASE_ZERO);
         }
     }
+    // initialise a matrix that refers to nonzeros stored externally
+    InterpolationMatrix( TIndexVecHost& ia, TIndexVecHost& ja, double *v ):
+        ia_(ia), ja_(ja)
+    {
+        n_rows_ = ia_.size() - 1;
+        nnz_ = ja_.size();
+        v = TVecDevice(v, nnz_);
+        n_cols_ = *(std::max_element(ja.begin(),ja.end())) + 1;
+        // GPU : use CUSPARSE
+        if( CoordTraits<CoordType>::is_device() ){
+            assert( cusparseCreate(&handle_) == CUSPARSE_STATUS_SUCCESS );
+            status_ = cusparseCreateMatDescr(&descra_);
+            assert( status_==CUSPARSE_STATUS_SUCCESS );
+            cusparseSetMatType(descra_, CUSPARSE_MATRIX_TYPE_GENERAL);
+            cusparseSetMatIndexBase(descra_, CUSPARSE_INDEX_BASE_ZERO);
+        }
+    }
     int rows() const{
         return n_rows_;
     }
@@ -128,6 +145,12 @@ public:
     }
     const TIndexVec& col_indexes(){
         return ja_;
+    }
+
+    // set new nonzero values
+    void set_nonzeros(const TVec &x){
+        assert(x.size()==v_.size());
+        v_.at(lin::all) = x;
     }
 
 private:

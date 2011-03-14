@@ -1,6 +1,7 @@
 #include "fvmpor_ODE.h"
 
-#include "preconditioner_dss.h"
+//#include "preconditioner_dss.h"
+#include "preconditioner_ilu0.h"
 
 #include <fvm/fvm.h>
 #include <fvm/solver.h>
@@ -232,12 +233,14 @@ try {
     double finalTime = MPI_Wtime() - startTime;
     if( mpicomm->rank()==0){
         std::cout << std::endl << "Simulation took : " << finalTime << " seconds" << std::endl;
-        std::cout << "Preconditioner : M " << preconditioner.time_M()
-                  << " J " << preconditioner.time_jacobian()
-                  << " apply " << preconditioner.time_apply()
+        std::cout << "Preconditioner : M  " << preconditioner.time_M()
+                  << "  |  J " << preconditioner.time_jacobian()
+                  << "  |  apply " << preconditioner.time_apply()
+                  << "  |  copy " << preconditioner.time_copy()
                   << std::endl;
-        std::cout << "time in Precond = " << preconditioner.time_apply()+preconditioner.time_compute()
-                  << "time elsewhere = " << finalTime - (preconditioner.time_apply()+preconditioner.time_compute())
+        double time_in_precon = preconditioner.time_copy()+preconditioner.time_apply()+preconditioner.time_compute();
+        std::cout << "time in Precond = " << time_in_precon
+                  << ", time elsewhere = " << finalTime - time_in_precon
                   << std::endl;
     }
 

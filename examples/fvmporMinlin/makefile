@@ -2,8 +2,8 @@ cc=icc
 CC=icpc
 #CC=g++ -Wall -Wno-sign-compare -Wno-unused
 localOPTS=-DMPICH_IGNORE_CXX_SEEK -DUSE_MINLIN -DUSE_MKL
-debugOPTS=-g -O3
-#debugOPTS=-g -O3 -DLIN_VERBOSE -DUSE_CUDA
+debugOPTS=-g -O3 -DUSE_CUDA
+#debugOPTS=-g -O3 -DLIN_VERBOSE
 #debugOPTS=-g -O3
 #debugOPTS=-g -O3 -openmp
 #debugOPTS=-g -O0 -DLIN_DEBUG
@@ -25,8 +25,8 @@ LIBS=-L/opt/intel/impi/3.2/lib -L/opt/intel/Compiler/11.1/069/mkl/lib/32 -L/opt/
 endif
 
 #SUNDIALS=-lsundials_idas -lsundials_nvecparallel
-SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel.a
-#SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel_cuda.a
+#SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel.a
+SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel_cuda.a
 
 LIB=$(MKL) $(SUNDIALS) -lmpi -lpthread -lcublas -lcusparse -lcuda
 MESH=../../mesh.o
@@ -37,7 +37,8 @@ UTIL=$(MINLIN)/cuda.o
 #PRECON_DAE=parms_wrapper.o preconditioner_parms_DAE.o
 
 preconOPTS=-DPRECON_DSS -DPRECON
-PRECON=preconditioner_dss.o
+#PRECON=preconditioner_dss.o
+PRECON=preconditioner_ilu0.o
 PRECON_DAE=preconditioner_dss_DAE.o
 
 #preconOPTS=
@@ -77,7 +78,8 @@ vsM: vs.h fvmpor_DAE_impl.cpp $(IMPLEMENTATIONDEPS_DAE)
 cassion.o : cassion.cpp fvmpor.h
 	$(CC) $(OPTS) $(INCLUDE) -c cassion.cpp
 
-fvmpor_ODE.o : fvmpor_ODE.h preconditioner_dss.h fvmpor_ODE.cpp
+#fvmpor_ODE.o : fvmpor_ODE.h preconditioner_dss.h fvmpor_ODE.cpp
+fvmpor_ODE.o : fvmpor_ODE.h preconditioner_ilu0.h fvmpor_ODE.cpp
 	$(CC) $(OPTS) $(INCLUDE) -c fvmpor_ODE.cpp -o fvmpor_ODE.o
 
 fvmpor_ODE_impl.o : fvmpor_ODE.h fvmpor_ODE_impl.cpp fvmpor.h
@@ -97,6 +99,9 @@ preconditioner_parms.o : preconditioner_parms.h preconditioner_parms.cpp
 
 preconditioner_parms_DAE.o : preconditioner_parms_DAE.h preconditioner_parms_DAE.cpp
 	$(CC) $(OPTS) $(INCLUDE) -c preconditioner_parms_DAE.cpp
+
+preconditioner_ilu0.o : preconditioner_ilu0.h preconditioner_ilu0.cpp
+	$(CC) $(OPTS) $(INCLUDE) -c preconditioner_ilu0.cpp -o preconditioner_ilu0.o
 
 preconditioner_dss.o : preconditioner_dss.h preconditioner_dss.cpp
 	$(CC) $(OPTS) $(INCLUDE) -c preconditioner_dss.cpp -o preconditioner_dss.o

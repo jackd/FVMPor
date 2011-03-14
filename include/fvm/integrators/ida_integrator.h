@@ -473,8 +473,6 @@ void* IDAIntegrator<Physics, Preconditioner>::ida() {
     return ida_mem;
 }
 
-// DEVICE
-// it is a bit hard to see how this would work
 // (IDA)
 // Computes the residual function
 template<class Physics, class Preconditioner>

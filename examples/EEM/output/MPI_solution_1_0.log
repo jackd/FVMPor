@@ -1,0 +1,40 @@
+==================================
+creating comm solution(0, 1) = -2080374780
+==================================
+saving solution at time 0
+writing solution 0in VTK XML format
+writing solution header 0in VTK XML format
+saving solution at time 227273
+writing solution 1in VTK XML format
+writing solution header 1in VTK XML format
+saving solution at time 454545
+writing solution 2in VTK XML format
+writing solution header 2in VTK XML format
+saving solution at time 681818
+writing solution 3in VTK XML format
+writing solution header 3in VTK XML format
+saving solution at time 909091
+writing solution 4in VTK XML format
+writing solution header 4in VTK XML format
+saving solution at time 1.13636e+06
+writing solution 5in VTK XML format
+writing solution header 5in VTK XML format
+saving solution at time 1.36364e+06
+writing solution 6in VTK XML format
+writing solution header 6in VTK XML format
+saving solution at time 1.59091e+06
+writing solution 7in VTK XML format
+writing solution header 7in VTK XML format
+saving solution at time 1.81818e+06
+writing solution 8in VTK XML format
+writing solution header 8in VTK XML format
+saving solution at time 2.04545e+06
+writing solution 9in VTK XML format
+writing solution header 9in VTK XML format
+saving solution at time 2.27273e+06
+writing solution 10in VTK XML format
+writing solution header 10in VTK XML format
+saving solution at time 2.5e+06
+writing solution 11in VTK XML format
+writing solution header 11in VTK XML format
+freeing comm solution(-2080374780) that isn't MPI_COMM_WORLD

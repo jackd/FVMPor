@@ -1,0 +1,15 @@
+==================================
+creating comm WORLD(0, 1) = 1140850688
+==================================
+===================================
+I have the following cores : 0 1 2 3 4 5 6 7 
+===================================
+duplicating comm WORLD(1140850688) -> MESH(-2080374784)
+loaded mesh
+initialised physics
+initialised integrator
+initialised solver
+set integrator max timestep (0)
+duplicating comm WORLD(1140850688) -> solution(-2080374780)
+beginning timestepping
+freeing comm WORLD(1140850688) that is MPI_COMM_WORLD

@@ -2,7 +2,8 @@
 
 #include <fvm/fvm.h>
 #include <fvm/solver.h>
-#include <fvm/integrators/ida_integrator.h>
+//#include <fvm/integrators/ida_integrator.h>
+#include <fvm/integrators/eem_integrator.h>
 #include <mpi/mpicomm.h>
 #include <mpi/ompaffinity.h>
 #include <fvm/impl/communicators/communicator.h>

@@ -1,0 +1,5 @@
+==================================
+creating comm EEM(0, 1) = -2080374783
+==================================
+	EEMIntegrator<Physics>::initialise()
+freeing comm EEM(-2080374783) that isn't MPI_COMM_WORLD

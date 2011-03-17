@@ -1,0 +1,18 @@
+==================================
+creating comm MESH(0, 1) = -2080374784
+==================================
+Mesh::construct_node_pattern()
+-----------------------------
+Waitall : 0 requests	: finished with flag MPI_SUCCESS
+Waitall : 0 requests	: finished with flag MPI_SUCCESS
+receiving and sending 0 and 0
+Waitall : 0 requests	: finished with flag MPI_SUCCESS
+Waitall : 0 requests	: finished with flag MPI_SUCCESS
+Mesh::construct_node_pattern() FINISHED
+-----------------------------
+duplicating comm MESH(-2080374784) -> EEM(-2080374783)
+duplicating comm MESH(-2080374784) -> MESH_NP_Type(-2080374782)
+MPI_Barrier
+	MPI_Barrier finished
+duplicating comm MESH(-2080374784) -> MESH_NP_double(-2080374781)
+freeing comm MESH(-2080374784) that isn't MPI_COMM_WORLD

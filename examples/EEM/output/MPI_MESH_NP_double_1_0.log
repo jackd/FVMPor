@@ -1,0 +1,8 @@
+==================================
+creating comm MESH_NP_double(0, 1) = -2080374781
+==================================
+Communicator::build_from_pattern
+	block_size_ = 1
+	data_on_host_ = true
+adding vector with tag 1
+freeing comm MESH_NP_double(-2080374781) that isn't MPI_COMM_WORLD

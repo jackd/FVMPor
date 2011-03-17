@@ -13,33 +13,33 @@ RM=rm -f
 IS64BIT=defined
 
 ifdef IS64BIT
-INCLUDE=-I../../include -I$(HOME)/include -I/opt/parmetis -I/opt/sundials2.4.0/include -I/home/cummingb/projects/minlin -I/usr/local/cuda/include
+INCLUDE=-I../../include -I$(HOME)/include -I/opt/parmetis -I/opt/minlin -I/usr/local/cuda/include -I../EEM
 MKL=-lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -liomp5
 #LIBS=-L/pkg/intel_ia64/Compiler/11.1/046/mkl/lib/64 -L/pkg/intel_ia64/Compiler/11.1/046/lib/ia64 -L$(HOME)/lib
-LIBS=-L/opt/parmetis -L/opt/sundials2.4.0/lib -L/usr/local/cuda/lib64
-MINLIN=/home/cummingb/projects/minlin
+#LIBS=-L/opt/parmetis -L/opt/sundials2.4.0/lib -L/usr/local/cuda/lib64
+LIBS=-L/opt/parmetis -L/usr/local/cuda/lib64
+#MINLIN=/home/cummingb/projects/minlin
+MINLIN=/opt/minlin
 else
 INCLUDE=-I../../include -I/opt/intel/impi/3.2/include -I/opt/intel/Compiler/11.1/069/mkl/include -I/home/cummingb/include
 MKL=-lmkl_intel_threa
 LIBS=-L/opt/intel/impi/3.2/lib -L/opt/intel/Compiler/11.1/069/mkl/lib/32 -L/opt/intel/Compiler/11.1/069/lib/ia32 -L/home/cummingb/lib
 endif
 
-SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel.a
-#SUNDIALS=/opt/sundials2.4.0/lib/libsundials_idas.a /opt/sundials2.4.0/lib/libsundials_nvecparallel_cuda.a
 
-LIB=$(MKL) $(SUNDIALS) -lmpi -lpthread -lcublas -lcusparse -lcuda
+LIB=$(MKL) -lmpi -lpthread -lcublas -lcusparse -lcuda
 #LIB=$(MKL) -lmpi -lpthread -lcublas -lcusparse -lcuda
 MESH=../../mesh.o
 UTIL=$(MINLIN)/cuda.o
 
-IMPLEMENTATIONDEPS_ODE=fvmpor_ODE.o fvmpor.o shape.o $(MESH) $(UTIL) $(PRECON)
+IMPLEMENTATIONDEPS_ODE=fvmpor_ODE.o fvmpor.o shape.o missing_lin.o $(MESH) $(UTIL)
 
 OPTS=$(localOPTS) $(debugOPTS) -openmp
 
 # ...............
 # all
 # ...............
-all: cassion vs cassionM vsM
+all: cassion vs
 
 # ................
 # compile
@@ -64,6 +64,9 @@ fvmpor.o : fvmpor.h fvmpor.cpp
 
 shape.o : shape.h shape.cpp
 	$(CC) $(OPTS) $(INCLUDE) -c shape.cpp -o shape.o
+	
+missing_lin.o : missing_lin.cpp
+	$(CC) $(OPTS) $(INCLUDE) -c missing_lin.cpp -o missing_lin.o
 
 # ............
 # clean

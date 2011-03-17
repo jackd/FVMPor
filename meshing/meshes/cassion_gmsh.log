@@ -1,0 +1,35 @@
+Info    : Running 'gmsh ./meshes/cassion.geo -3 -optimize'
+Info    : Started on Tue Mar 15 14:38:16 2011
+Info    : Reading './meshes/cassion.geo'
+Info    : Read './meshes/cassion.geo'
+Info    : Meshing 1D...
+Info    : Meshing curve 1 (Line)
+Info    : Meshing curve 2 (Line)
+Info    : Meshing curve 3 (Line)
+Info    : Meshing curve 4 (Line)
+Info    : Meshing curve 5 (Line)
+Info    : Meshing curve 6 (Line)
+Info    : Meshing curve 7 (Line)
+Info    : Meshing curve 8 (Line)
+Info    : Meshing curve 9 (Line)
+Info    : Meshing curve 10 (Line)
+Info    : Meshing curve 11 (Line)
+Info    : Meshing curve 12 (Line)
+Info    : Meshing curve 13 (Line)
+Info    : Meshing curve 14 (Line)
+Info    : Meshing curve 15 (Line)
+Info    : Meshing curve 16 (Line)
+Info    : Meshing curve 17 (Line)
+Info    : Mesh 1D complete (0.009999 s)
+Info    : Meshing 2D...
+Info    : Meshing surface 40 (Plane, MeshAdapt)
+Info    : Meshing surface 41 (Plane, MeshAdapt)
+Info    : Meshing surface 42 (Plane, MeshAdapt)
+Info    : Meshing surface 43 (Plane, MeshAdapt)
+Info    : Mesh 2D complete (0.357946 s)
+Info    : Meshing 3D...
+Info    : Mesh 3D complete (0 s)
+Info    : 1599 vertices 3339 elements
+Info    : Writing './meshes/cassion.msh'
+Info    : Wrote './meshes/cassion.msh'
+Info    : Stopped on Tue Mar 15 14:38:16 2011
